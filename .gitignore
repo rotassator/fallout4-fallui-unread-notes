@@ -1,0 +1,5 @@
+build/
+swf_dump/
+
+# The DLL in dist/ is tracked — it's the distributable binary.
+# Rebuilding updates it automatically via CMake post-build step.
