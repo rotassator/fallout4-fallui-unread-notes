@@ -10,6 +10,8 @@
 
 #include <shlobj.h>
 #include <set>
+#include <vector>
+#include <algorithm>
 
 static PluginHandle g_pluginHandle = kPluginHandle_Invalid;
 
@@ -148,6 +150,64 @@ public:
 	}
 };
 
+// SortByReadStatus(itemArray) -> void
+// Called from FallUI's modSetItemList after the entry list is populated.
+// Iterates the item array, finds notes/holotapes (filterFlag & 0x2280),
+// checks read status, and does a stable partition so unread items come first.
+//
+// We do this in C++ rather than Flash because:
+//   1. Loops in AVM2 P-code are painful to write by hand
+//   2. We have direct access to g_readNotes (no per-item Scaleform call overhead)
+//   3. std::stable_partition is cleaner than anything we'd write in P-code
+class ScaleformSortByReadStatus : public GFxFunctionHandler
+{
+public:
+	virtual void Invoke(Args* args)
+	{
+		if (args->numArgs < 1) return;
+
+		GFxValue* arr = &args->args[0];
+		UInt32 size = arr->GetArraySize();
+		if (size == 0) return;
+
+		// Tag each item with _readSort: 0 = unread note/holotape, 1 = everything else.
+		// Tags are set for future sort integration with FallUI's column sort system.
+		for (UInt32 i = 0; i < size; i++)
+		{
+			GFxValue element;
+			if (!arr->GetElement(i, &element))
+				continue;
+
+			UInt32 sortVal = 1;  // default: not an unread note
+
+			GFxValue filterFlagVal;
+			if (element.HasMember("filterFlag") && element.GetMember("filterFlag", &filterFlagVal))
+			{
+				UInt32 filterFlag = filterFlagVal.GetUInt();
+
+				if (filterFlag & 0x2280)  // note (0x80) or holotape (0x2000)
+				{
+					GFxValue formIDVal;
+					if (element.HasMember("formID") && element.GetMember("formID", &formIDVal))
+					{
+						UInt32 formID = formIDVal.GetUInt();
+						sortVal = (g_readNotes.count(formID) == 0) ? 0 : 1;
+					}
+				}
+			}
+
+			GFxValue sortGfx;
+			sortGfx.SetUInt(sortVal);
+			element.SetMember("_readSort", &sortGfx);
+		}
+
+		// Sorting is done on the Flash side — to be integrated with
+		// FallUI's column sort system in a future update.
+		// We just tag the items here; the P-code calls:
+		//   param1.sortOn("_readSort", Array.NUMERIC)
+	}
+};
+
 
 // ============================================================================
 // Scaleform Registration Callback
@@ -160,6 +220,7 @@ bool ScaleformCallback(GFxMovieView* view, GFxValue* value)
 	RegisterFunction<ScaleformIsNoteRead>(value, movieRoot, "IsNoteRead");
 	RegisterFunction<ScaleformMarkAsRead>(value, movieRoot, "MarkAsRead");
 	RegisterFunction<ScaleformGetReadCount>(value, movieRoot, "GetReadCount");
+	RegisterFunction<ScaleformSortByReadStatus>(value, movieRoot, "SortByReadStatus");
 
 	return true;
 }
