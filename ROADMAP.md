@@ -10,6 +10,13 @@
 - Debug commands (bResetAll, bMarkAllRead)
 - AdvanceMovie hook for reliable display refresh
 
+## Performance
+- [ ] Performance review — profile the AdvanceMovie hook. The quick-check walks entryList every frame looking for the first read item. With large inventories (370+ items) this could add up. Consider caching the index of a known read item for O(1) check instead of O(n) scan.
+- [ ] Investigate whether string operations (strstr on text) in the quick-check are a bottleneck — could use a simpler flag property on the data entry instead.
+- [ ] bMarkAllRead with 100+ items caused fan spin — investigate whether this is the modification loop or InvalidateData being heavy. Consider batching or throttling.
+- [ ] Long-term stability: check for memory leaks or accumulating state. GFxValue CreateString calls in the modification loop — do these get garbage collected? Does the Parser.parseItemCache grow unbounded with our modified text keys?
+- [ ] Measure actual frame time impact of the hook when idle (quick-check only) vs active (full modification walk).
+
 ## Bugs / Polish
 - [ ] Item count column (e.g. "13", "100") not dimmed — FallUI renders these in separate TextFields
 - [ ] Performance: quick-check walks entire entryList every frame — cache known read item index for O(1) check
@@ -19,7 +26,7 @@
 
 ## Features — Near Term
 - [ ] Configurable logging levels (INI: `iLogLevel=0-2`). 0=minimal (errors + startup), 1=normal (modifications, config changes, events), 2=debug (per-item details, hook firing, retry counts). Helps users include useful info in bug reports without flooding the log during normal play.
-- [ ] Dim the item count column to match the title dimming
+- [ ] **HIGH PRIORITY**: Renderer alpha dimming via AdvanceMovie hook — solves TWO problems at once: correct colour for all FallUI themes AND item count dimming. Walk renderers in the hook, check itemIndex → entryList data → read status, set renderer alpha. Recycling problem solved by correcting every frame. Would replace HTML colour dimming (keep suffix + sorting as text-based). Needs performance comparison vs current quick-check approach.
 - [ ] MCM integration (replace or supplement INI config)
 - [ ] Option to use a prefix instead of/as well as suffix (e.g. prepend a marker character)
 - [ ] Proper colour dimming — read FallUI's colour from Data/MCM/Settings/FallUI.ini (iPipboyColorize + custom RGB) and multiply by iReadBrightness. Currently uses % of white which only works properly with PipboyFX filter mode. Also add `sCustomDimColor=` INI override (default empty) — if set to a valid hex like `#007F00`, uses that directly instead of computing from FallUI's colour. Gives users full manual control.
