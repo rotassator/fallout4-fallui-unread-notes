@@ -39,10 +39,15 @@ static const char* kEntryListPath =
 // ============================================================================
 // Configuration (loaded from Data/F4SE/Plugins/UnreadNotes.ini)
 // ============================================================================
+static int    g_cfgLogLevel = 1;
 static float  g_cfgBrightness = 0.5f;
 static char   g_cfgSuffix[64] = " (Read)";
 static bool   g_cfgSortReadToBottom = true;
 static bool   g_markAllReadPending = false;
+
+// Log macro: only logs if current level >= required level
+// 0 = minimal (errors, startup, config), 1 = normal, 2 = debug (perf, per-item)
+#define LOG(level, ...) do { if (g_cfgLogLevel >= level) _MESSAGE(__VA_ARGS__); } while(0)
 
 static void CreateDefaultConfig(const char* path)
 {
@@ -58,6 +63,10 @@ static void CreateDefaultConfig(const char* path)
 		";\n"
 		"\n"
 		"[Display]\n"
+		"\n"
+		"; Logging level. 0 = minimal, 1 = normal, 2 = debug (includes perf stats).\n"
+		"; Default: 1\n"
+		"iLogLevel=1\n"
 		"\n"
 		"; Brightness of read items (0-100).\n"
 		"; 100 = full brightness (no change), 50 = half brightness, 0 = invisible.\n"
@@ -81,7 +90,7 @@ static void CreateDefaultConfig(const char* path)
 		"bMarkAllRead=0\n"
 	);
 	fclose(f);
-	_MESSAGE("UnreadNotes: Created default config at %s", path);
+	LOG(0, "UnreadNotes: Created default config at %s", path);
 }
 
 static void LoadConfig()
@@ -92,6 +101,14 @@ static void LoadConfig()
 	DWORD attrs = GetFileAttributesA(iniPath);
 	if (attrs == INVALID_FILE_ATTRIBUTES)
 		CreateDefaultConfig(iniPath);
+
+	int prevLogLevel = g_cfgLogLevel;
+	g_cfgLogLevel = GetPrivateProfileIntA("Display", "iLogLevel", 1, iniPath);
+	if (g_cfgLogLevel < 0) g_cfgLogLevel = 0;
+	if (g_cfgLogLevel > 2) g_cfgLogLevel = 2;
+
+	if (prevLogLevel != g_cfgLogLevel && prevLogLevel != 1)  // Don't log on first load (default=1)
+		_MESSAGE("UnreadNotes: Log level changed to %d", g_cfgLogLevel);
 
 	int rawBrightness = GetPrivateProfileIntA("Display", "iReadBrightness", 50, iniPath);
 	if (rawBrightness < 0 || rawBrightness > 100)
@@ -126,8 +143,8 @@ static void LoadConfig()
 
 	g_cfgSortReadToBottom = GetPrivateProfileIntA("Display", "bSortReadToBottom", 1, iniPath) != 0;
 
-	_MESSAGE("UnreadNotes: Config — brightness=%d%% suffix=\"%s\" sort=%d",
-		(int)(g_cfgBrightness * 100), g_cfgSuffix, g_cfgSortReadToBottom);
+	LOG(0, "UnreadNotes: Config — brightness=%d%% suffix=\"%s\" sort=%d logLevel=%d",
+		(int)(g_cfgBrightness * 100), g_cfgSuffix, g_cfgSortReadToBottom, g_cfgLogLevel);
 
 	// Debug commands — triggered via INI, auto-reset after use
 	if (GetPrivateProfileIntA("Debug", "bResetAll", 0, iniPath) != 0)
@@ -155,13 +172,13 @@ static const UInt32 kDataVersion = 1;
 
 void Serialization_Revert(const F4SESerializationInterface* intfc)
 {
-	_MESSAGE("UnreadNotes: Revert — clearing %u read notes", g_readNotes.size());
+	LOG(1, "UnreadNotes: Revert — clearing %u read notes", g_readNotes.size());
 	g_readNotes.clear();
 }
 
 void Serialization_Save(const F4SESerializationInterface* intfc)
 {
-	_MESSAGE("UnreadNotes: Save — writing %u read notes", g_readNotes.size());
+	LOG(1, "UnreadNotes: Save — writing %u read notes", g_readNotes.size());
 
 	if (intfc->OpenRecord(kRecordType_ReadNotes, kDataVersion))
 	{
@@ -202,12 +219,12 @@ void Serialization_Load(const F4SESerializationInterface* intfc)
 					}
 					else
 					{
-						_MESSAGE("UnreadNotes: FormID %08X could not be resolved, skipping",
+						LOG(1, "UnreadNotes: FormID %08X could not be resolved, skipping",
 							savedFormID);
 					}
 				}
 
-				_MESSAGE("UnreadNotes: Load — %u of %u entries resolved", loaded, count);
+				LOG(0, "UnreadNotes: Load — %u of %u entries resolved", loaded, count);
 			}
 			else
 			{
@@ -398,7 +415,7 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 
 	if (g_markAllReadPending)
 	{
-		_MESSAGE("UnreadNotes: DEBUG — Marked all readable items as read (total: %u)",
+		LOG(0, "UnreadNotes: DEBUG — Marked all readable items as read (total: %u)",
 			g_readNotes.size());
 		g_markAllReadPending = false;
 	}
@@ -436,7 +453,7 @@ public:
 						bool isNew = g_readNotes.insert(formID).second;
 						if (isNew)
 						{
-							_MESSAGE("UnreadNotes: Marked FormID %08X as read (total: %u)",
+							LOG(1, "UnreadNotes: Marked FormID %08X as read (total: %u)",
 								formID, g_readNotes.size());
 						}
 					}
@@ -448,7 +465,7 @@ public:
 		if (evn->isOpen && strcmp(name, "PipboyMenu") == 0)
 		{
 			LoadConfig();
-			_MESSAGE("UnreadNotes: PipboyMenu opened");
+			LOG(1, "UnreadNotes: PipboyMenu opened");
 		}
 
 		return kEvent_Continue;
@@ -471,7 +488,7 @@ void OnF4SEMessage(F4SEMessagingInterface::Message* msg)
 			if (*g_ui)
 			{
 				(*g_ui)->menuOpenCloseEventSource.AddEventSink(&g_menuEventHandler);
-				_MESSAGE("UnreadNotes: Menu event handler registered");
+				LOG(0, "UnreadNotes: Menu event handler registered");
 			}
 		}
 	}
@@ -574,7 +591,7 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 				listMc.Invoke("InvalidateData", nullptr, nullptr, 0);
 			}
 
-			_MESSAGE("UnreadNotes: AdvanceMovie — modified %d entries", modified);
+			LOG(1, "UnreadNotes: AdvanceMovie — modified %d entries", modified);
 		}
 	}
 
@@ -657,7 +674,7 @@ applyAlpha:
 
 	if (s_frameCount >= 300)  // Log every ~5 seconds (TODO: gate behind iLogLevel)
 	{
-		_MESSAGE("UnreadNotes: Perf — avg=%.1fus max=%.1fus over %d frames",
+		LOG(2, "UnreadNotes: Perf — avg=%.1fus max=%.1fus over %d frames",
 			s_totalUs / s_frameCount, s_maxUs, s_frameCount);
 		s_frameCount = 0;
 		s_totalUs = 0;
@@ -668,7 +685,7 @@ applyAlpha:
 static void InstallAdvanceMovieHook()
 {
 	UInt8* funcStart = (UInt8*)AdvanceMovie_Addr.GetUIntPtr();
-	_MESSAGE("UnreadNotes: AdvanceMovie at %p, first bytes: %02X %02X %02X %02X %02X %02X",
+	LOG(2, "UnreadNotes: AdvanceMovie at %p, first bytes: %02X %02X %02X %02X %02X %02X",
 		funcStart, funcStart[0], funcStart[1], funcStart[2],
 		funcStart[3], funcStart[4], funcStart[5]);
 
@@ -700,7 +717,7 @@ static void InstallAdvanceMovieHook()
 	g_branchTrampoline.Write6Branch(AdvanceMovie_Addr.GetUIntPtr(),
 		(uintptr_t)AdvanceMovie_Hook);
 
-	_MESSAGE("UnreadNotes: AdvanceMovie hook installed");
+	LOG(0, "UnreadNotes: AdvanceMovie hook installed");
 }
 
 

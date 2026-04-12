@@ -25,7 +25,7 @@
 - [x] ~~Suffix character restrictions~~ — DONE. `< >` stripped on load with log warning.
 
 ## Features — Near Term
-- [ ] Configurable logging levels (INI: `iLogLevel=0-2`). 0=minimal (errors + startup), 1=normal (modifications, config changes, events), 2=debug (per-item details, perf stats, hook firing). Gate perf logging behind level 2.
+- [x] ~~Configurable logging levels~~ — DONE. iLogLevel=0-2. Perf stats gated behind level 2.
 - [ ] MCM integration (replace or supplement INI config)
 - [ ] Option to use a prefix instead of/as well as suffix (e.g. prepend a marker character)
 - [ ] Games category (Grognak, Pipfall, etc.) — check if they have a distinguishable filterFlag
