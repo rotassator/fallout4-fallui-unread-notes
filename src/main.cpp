@@ -42,16 +42,7 @@ static const char* kEntryListPath =
 static float  g_cfgBrightness = 0.5f;
 static char   g_cfgSuffix[64] = " (Read)";
 static bool   g_cfgSortReadToBottom = true;
-static char   g_cfgDimColor[8] = "";
 static bool   g_markAllReadPending = false;
-
-static void ComputeDimColor()
-{
-	int val = (int)(255.0f * g_cfgBrightness);
-	if (val < 0) val = 0;
-	if (val > 255) val = 255;
-	snprintf(g_cfgDimColor, sizeof(g_cfgDimColor), "#%02X%02X%02X", val, val, val);
-}
 
 static void CreateDefaultConfig(const char* path)
 {
@@ -118,10 +109,8 @@ static void LoadConfig()
 
 	g_cfgSortReadToBottom = GetPrivateProfileIntA("Display", "bSortReadToBottom", 1, iniPath) != 0;
 
-	ComputeDimColor();
-
-	_MESSAGE("UnreadNotes: Config — brightness=%d%% color=%s suffix=\"%s\" sort=%d",
-		(int)(g_cfgBrightness * 100), g_cfgDimColor, g_cfgSuffix, g_cfgSortReadToBottom);
+	_MESSAGE("UnreadNotes: Config — brightness=%d%% suffix=\"%s\" sort=%d",
+		(int)(g_cfgBrightness * 100), g_cfgSuffix, g_cfgSortReadToBottom);
 
 	// Debug commands — triggered via INI, auto-reset after use
 	if (GetPrivateProfileIntA("Debug", "bResetAll", 0, iniPath) != 0)
@@ -345,8 +334,7 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 		const char* text = textVal.GetString();
 
 		// Skip if already modified
-		if (strstr(text, g_cfgDimColor) ||
-			(g_cfgSuffix[0] && strstr(text, g_cfgSuffix)))
+		if (g_cfgSuffix[0] && strstr(text, g_cfgSuffix))
 			continue;
 
 		// Find end of [Tag] prefix — FallUI strips these during parsing
@@ -357,18 +345,13 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 			if (bracket) tagEnd = bracket + 1;
 		}
 
-		// Build modified text with HTML colour dimming and/or suffix
+		// Build modified text — suffix only. Alpha dimming is handled
+		// separately by the renderer alpha code in the AdvanceMovie hook.
+		if (!g_cfgSuffix[0])
+			continue;  // No suffix configured, nothing to modify
+
 		char buf[512];
-		if (g_cfgBrightness < 1.0f)
-		{
-			snprintf(buf, sizeof(buf), "%.*s<font color='%s'>%s%s</font>",
-				(int)(tagEnd - text), text, g_cfgDimColor, tagEnd, g_cfgSuffix);
-		}
-		else if (g_cfgSuffix[0])
-		{
-			snprintf(buf, sizeof(buf), "%s%s", text, g_cfgSuffix);
-		}
-		else continue;
+		snprintf(buf, sizeof(buf), "%s%s", text, g_cfgSuffix);
 
 		// Modify sort key to push read items to bottom of subcategory
 		if (g_cfgSortReadToBottom)
@@ -499,6 +482,9 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 	if (g_readNotes.empty() && !g_markAllReadPending)
 		return;
 
+	LARGE_INTEGER perfStart, perfEnd, perfFreq;
+	QueryPerformanceCounter(&perfStart);
+
 	// Check this is PipboyMenu
 	if (!menu->movie || !menu->movie->movieRoot)
 		return;
@@ -549,29 +535,116 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 				tv.GetType() == GFxValue::kType_String)
 			{
 				const char* t = tv.GetString();
-				if (!strstr(t, g_cfgDimColor) &&
-					!(g_cfgSuffix[0] && strstr(t, g_cfgSuffix)))
+				if (!(g_cfgSuffix[0] && strstr(t, g_cfgSuffix)))
 					needsModification = true;
 			}
 		}
 
 		if (!needsModification)
-			return;
+			goto applyAlpha;  // Text is fine, but still need to update renderer alpha
 	}
 
-	// Apply modifications and refresh
-	int modified = ModifyEntryListData(movieRoot, entryList, entryCount);
-
-	if (modified > 0)
+	// Apply text modifications (suffix, sort key) and refresh
 	{
-		GFxValue listMc;
-		if (movieRoot->GetVariable(&listMc, "root.Menu_mc.CurrentPage.List_mc") &&
-			listMc.IsObject())
+		int modified = ModifyEntryListData(movieRoot, entryList, entryCount);
+
+		if (modified > 0)
 		{
-			listMc.Invoke("InvalidateData", nullptr, nullptr, 0);
+			GFxValue listMc;
+			if (movieRoot->GetVariable(&listMc, "root.Menu_mc.CurrentPage.List_mc") &&
+				listMc.IsObject())
+			{
+				listMc.Invoke("InvalidateData", nullptr, nullptr, 0);
+			}
+
+			_MESSAGE("UnreadNotes: AdvanceMovie — modified %d entries", modified);
+		}
+	}
+
+applyAlpha:
+	// Apply renderer alpha dimming — dims the entire row including item counts.
+	// Runs every frame to handle renderer recycling across subcategory switches.
+	// This is lightweight: 14 renderers × (getChildAt + itemIndex lookup + alpha set).
+	static const char* kEntryHolderPath =
+		"root.Menu_mc.CurrentPage.List_mc.entryHolder_mc";
+
+	GFxValue entryHolder;
+	if (!movieRoot->GetVariable(&entryHolder, kEntryHolderPath) || !entryHolder.IsObject())
+		return;
+
+	char pathBuf[256];
+	snprintf(pathBuf, sizeof(pathBuf), "%s.numChildren", kEntryHolderPath);
+	GFxValue numRendVal;
+	if (!movieRoot->GetVariable(&numRendVal, pathBuf))
+		return;
+	int numRenderers = (int)numRendVal.GetNumber();
+
+	for (int i = 0; i < numRenderers && i < 50; i++)
+	{
+		GFxValue indexArg;
+		indexArg.SetInt(i);
+		GFxValue renderer;
+		if (!entryHolder.Invoke("getChildAt", &renderer, &indexArg, 1))
+			continue;
+		if (!renderer.IsObject()) continue;
+
+		GFxValue itemIndexVal;
+		if (!renderer.HasMember("itemIndex") ||
+			!renderer.GetMember("itemIndex", &itemIndexVal))
+			continue;
+
+		int itemIndex = (int)itemIndexVal.GetNumber();
+		if (itemIndex < 0 || itemIndex >= (int)entryCount)
+			continue;
+
+		GFxValue dataEntry;
+		entryList.GetElement(itemIndex, &dataEntry);
+		if (!dataEntry.IsObject()) continue;
+
+		// Determine target alpha based on read status
+		double targetAlpha = 1.0;
+
+		GFxValue filterFlagVal;
+		if (dataEntry.HasMember("filterFlag") &&
+			dataEntry.GetMember("filterFlag", &filterFlagVal))
+		{
+			UInt32 filterFlag = filterFlagVal.GetUInt();
+			if (filterFlag & kFilterMask_ReadableItems)
+			{
+				GFxValue formIDVal;
+				if (dataEntry.HasMember("formID") &&
+					dataEntry.GetMember("formID", &formIDVal))
+				{
+					if (g_readNotes.count(formIDVal.GetUInt()) > 0)
+						targetAlpha = (double)g_cfgBrightness;
+				}
+			}
 		}
 
-		_MESSAGE("UnreadNotes: AdvanceMovie — modified %d entries", modified);
+		GFxValue alpha;
+		alpha.SetNumber(targetAlpha);
+		renderer.SetMember("alpha", &alpha);
+	}
+
+	// Performance logging — log every 60th frame to avoid spam
+	QueryPerformanceCounter(&perfEnd);
+	QueryPerformanceFrequency(&perfFreq);
+	double microseconds = (double)(perfEnd.QuadPart - perfStart.QuadPart) * 1000000.0 / perfFreq.QuadPart;
+
+	static int s_frameCount = 0;
+	static double s_totalUs = 0;
+	static double s_maxUs = 0;
+	s_frameCount++;
+	s_totalUs += microseconds;
+	if (microseconds > s_maxUs) s_maxUs = microseconds;
+
+	if (s_frameCount >= 300)  // Log every ~5 seconds (TODO: gate behind iLogLevel)
+	{
+		_MESSAGE("UnreadNotes: Perf — avg=%.1fus max=%.1fus over %d frames",
+			s_totalUs / s_frameCount, s_maxUs, s_frameCount);
+		s_frameCount = 0;
+		s_totalUs = 0;
+		s_maxUs = 0;
 	}
 }
 
