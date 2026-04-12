@@ -105,7 +105,24 @@ static void LoadConfig()
 
 	char suffixBuf[64] = {};
 	GetPrivateProfileStringA("Display", "sSuffix", " (Read)", suffixBuf, sizeof(suffixBuf), iniPath);
-	strncpy_s(g_cfgSuffix, suffixBuf, sizeof(g_cfgSuffix) - 1);
+
+	// Sanitise suffix: strip < > which break FallUI's HTML text mode.
+	{
+		char sanitised[64] = {};
+		int j = 0;
+		for (int i = 0; suffixBuf[i] && j < (int)sizeof(sanitised) - 1; i++)
+		{
+			if (suffixBuf[i] != '<' && suffixBuf[i] != '>')
+				sanitised[j++] = suffixBuf[i];
+		}
+		sanitised[j] = '\0';
+
+		if (j != (int)strlen(suffixBuf))
+			_MESSAGE("UnreadNotes: WARNING — stripped < > from sSuffix: \"%s\" -> \"%s\"",
+				suffixBuf, sanitised);
+
+		strncpy_s(g_cfgSuffix, sanitised, sizeof(g_cfgSuffix) - 1);
+	}
 
 	g_cfgSortReadToBottom = GetPrivateProfileIntA("Display", "bSortReadToBottom", 1, iniPath) != 0;
 

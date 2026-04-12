@@ -61,7 +61,7 @@ bMarkAllRead=0
 | Type | filterFlag | Examples |
 |------|-----------|----------|
 | Notes | `0x80` | Quest notes, personal logs, letters |
-| Holotapes | `0x2000` | Audio logs, terminal holotapes, game tapes |
+| Holotapes | `0x2000` | Audio logs, terminal holotapes |
 
 ## Compatibility
 

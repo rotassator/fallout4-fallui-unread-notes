@@ -22,7 +22,7 @@
 - [x] ~~Item count column not dimmed~~ — RESOLVED. Renderer alpha dims entire row.
 - [x] ~~Code cleanup: remove dead code~~ — DONE. Removed 720 lines of experimental approaches.
 - [x] ~~HTML colour doesn't match FallUI themes~~ — RESOLVED. Alpha dimming is colour-agnostic.
-- [ ] Suffix character restrictions: `< >` break FallUI's HTML mode — validate/sanitise in config loading.
+- [x] ~~Suffix character restrictions~~ — DONE. `< >` stripped on load with log warning.
 
 ## Features — Near Term
 - [ ] Configurable logging levels (INI: `iLogLevel=0-2`). 0=minimal (errors + startup), 1=normal (modifications, config changes, events), 2=debug (per-item details, perf stats, hook firing). Gate perf logging behind level 2.
@@ -43,7 +43,7 @@
 - [ ] Support for non-FallUI setups (vanilla Pip-Boy UI)
 
 ## Technical Debt
-- [ ] Review SEH exception handlers — still needed in AdvanceMovie hook context?
+- [x] ~~Review SEH exception handlers~~ — RESOLVED. All removed during cleanup. Hook code is stable. If crashes are reported, can add SEH wrapper around the hook body.
 - [ ] Proper git history: squash/clean experimental commits before merging to develop
 
 ## Publishing
