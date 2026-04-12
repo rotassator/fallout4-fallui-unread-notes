@@ -1,5 +1,18 @@
 build/
+
+# SWF working files — decompiled sources, P-code exports, backups, patches
 swf_dump/
+pcode_export/
+pcode_verify/
+*.swf.backup
+*_patched.swf
+
+# FallUI addon experiment (abandoned — Scaleform Loader.load doesn't work)
+addon/
+
+# Distribution archives (built manually, not tracked)
+*.zip
 
 # The DLL in dist/ is tracked — it's the distributable binary.
 # Rebuilding updates it automatically via CMake post-build step.
+# The INI in dist/ is a reference copy — actual INI is auto-created at runtime.

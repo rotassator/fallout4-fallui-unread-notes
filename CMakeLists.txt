@@ -120,14 +120,11 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 	COMMENT "Copying UnreadNotes.dll to dist/ and Vortex mod folder"
 )
 
-# Deploy SWFs to Vortex: run with `cmake --build build --target deploy-swf`
+# Deploy addon SWF to Vortex: run with `cmake --build build --target deploy-swf`
 add_custom_target(deploy-swf
-	COMMAND ${CMAKE_COMMAND} -E make_directory "${VORTEX_MOD_DIR}/Interface"
+	COMMAND ${CMAKE_COMMAND} -E make_directory "${VORTEX_MOD_DIR}/Interface/UI-Framework/Pipboy"
 	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${CMAKE_SOURCE_DIR}/dist/Interface/Pipboy_InvPage.swf"
-		"${VORTEX_MOD_DIR}/Interface/Pipboy_InvPage.swf"
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${CMAKE_SOURCE_DIR}/dist/Interface/PipboyMenu.swf"
-		"${VORTEX_MOD_DIR}/Interface/PipboyMenu.swf"
-	COMMENT "Copying SWF files to Vortex mod folder"
+		"${CMAKE_SOURCE_DIR}/addon/UnreadNotesAddon.swf"
+		"${VORTEX_MOD_DIR}/Interface/UI-Framework/Pipboy/UnreadNotesAddon.swf"
+	COMMENT "Copying UnreadNotesAddon.swf to Vortex mod folder"
 )
