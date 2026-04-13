@@ -10,12 +10,10 @@
 #include "common/IDebugLog.h"
 #include "f4se/ScaleformCallbacks.h"
 #include "f4se/GameMenus.h"
-#include "f4se/GameThreads.h"
 #include "xbyak/xbyak.h"
 
 #include <shlobj.h>
 #include <set>
-#include <string>
 
 static PluginHandle g_pluginHandle = kPluginHandle_Invalid;
 static F4SEMessagingInterface* g_messaging = nullptr;
@@ -29,7 +27,7 @@ static std::set<UInt32> g_readNotes;
 
 // Note/holotape filter mask: notes (0x80) | holotapes (0x2000)
 // Misc notes (0x200) excluded — recipes/schematics/contracts aren't readable
-static const UInt32 kFilterMask_ReadableItems = 0x2080;
+static constexpr UInt32 kFilterMask_ReadableItems = 0x2080;
 
 // Path to the inventory data array in the PipboyMenu Scaleform movie
 static const char* kEntryListPath =
@@ -96,21 +94,21 @@ static void CreateDefaultConfig(const char* path)
 static void LoadConfig()
 {
 	char iniPath[MAX_PATH];
-	snprintf(iniPath, sizeof(iniPath), "Data\\F4SE\\Plugins\\UnreadNotes.ini");
+	snprintf(iniPath, sizeof(iniPath), R"(Data\F4SE\Plugins\UnreadNotes.ini)");
 
 	DWORD attrs = GetFileAttributesA(iniPath);
 	if (attrs == INVALID_FILE_ATTRIBUTES)
 		CreateDefaultConfig(iniPath);
 
 	int prevLogLevel = g_cfgLogLevel;
-	g_cfgLogLevel = GetPrivateProfileIntA("Display", "iLogLevel", 1, iniPath);
+	g_cfgLogLevel = static_cast<int>(GetPrivateProfileIntA("Display", "iLogLevel", 1, iniPath));
 	if (g_cfgLogLevel < 0) g_cfgLogLevel = 0;
 	if (g_cfgLogLevel > 2) g_cfgLogLevel = 2;
 
 	if (prevLogLevel != g_cfgLogLevel && prevLogLevel != 1)  // Don't log on first load (default=1)
 		_MESSAGE("UnreadNotes: Log level changed to %d", g_cfgLogLevel);
 
-	int rawBrightness = GetPrivateProfileIntA("Display", "iReadBrightness", 50, iniPath);
+	int rawBrightness = static_cast<int>(GetPrivateProfileIntA("Display", "iReadBrightness", 50, iniPath));
 	if (rawBrightness < 0 || rawBrightness > 100)
 	{
 		_MESSAGE("UnreadNotes: WARNING — iReadBrightness=%d out of range (0-100), clamping",
@@ -118,7 +116,7 @@ static void LoadConfig()
 		if (rawBrightness < 0) rawBrightness = 0;
 		if (rawBrightness > 100) rawBrightness = 100;
 	}
-	g_cfgBrightness = rawBrightness / 100.0f;
+	g_cfgBrightness = static_cast<float>(rawBrightness) / 100.0f;
 
 	char suffixBuf[64] = {};
 	GetPrivateProfileStringA("Display", "sSuffix", " (Read)", suffixBuf, sizeof(suffixBuf), iniPath);
@@ -127,14 +125,14 @@ static void LoadConfig()
 	{
 		char sanitised[64] = {};
 		int j = 0;
-		for (int i = 0; suffixBuf[i] && j < (int)sizeof(sanitised) - 1; i++)
+		for (int i = 0; suffixBuf[i] && j < static_cast<int>(sizeof(sanitised)) - 1; i++)
 		{
 			if (suffixBuf[i] != '<' && suffixBuf[i] != '>')
 				sanitised[j++] = suffixBuf[i];
 		}
 		sanitised[j] = '\0';
 
-		if (j != (int)strlen(suffixBuf))
+		if (j != static_cast<int>(strlen(suffixBuf)))
 			_MESSAGE("UnreadNotes: WARNING — stripped < > from sSuffix: \"%s\" -> \"%s\"",
 				suffixBuf, sanitised);
 
@@ -144,7 +142,7 @@ static void LoadConfig()
 	g_cfgSortReadToBottom = GetPrivateProfileIntA("Display", "bSortReadToBottom", 1, iniPath) != 0;
 
 	LOG(0, "UnreadNotes: Config — brightness=%d%% suffix=\"%s\" sort=%d logLevel=%d",
-		(int)(g_cfgBrightness * 100), g_cfgSuffix, g_cfgSortReadToBottom, g_cfgLogLevel);
+		static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgSortReadToBottom, g_cfgLogLevel);
 
 	// Debug commands — triggered via INI, auto-reset after use
 	if (GetPrivateProfileIntA("Debug", "bResetAll", 0, iniPath) != 0)
@@ -166,9 +164,11 @@ static void LoadConfig()
 // ============================================================================
 // Serialization (Cosave Persistence)
 // ============================================================================
-static const UInt32 kPluginUID = 'UNrd';
-static const UInt32 kRecordType_ReadNotes = 'RdNt';
-static const UInt32 kDataVersion = 1;
+// FourCC tags written into the cosave. Hex values match MSVC's packing of
+// 'UNrd' and 'RdNt' — do not change without migrating existing save data.
+static constexpr UInt32 kPluginUID         = 0x554E7264;  // 'UNrd'
+static constexpr UInt32 kRecordType_ReadNotes = 0x52644E74;  // 'RdNt'
+static constexpr UInt32 kDataVersion       = 1;
 
 void Serialization_Revert(const F4SESerializationInterface* intfc)
 {
@@ -182,7 +182,7 @@ void Serialization_Save(const F4SESerializationInterface* intfc)
 
 	if (intfc->OpenRecord(kRecordType_ReadNotes, kDataVersion))
 	{
-		UInt32 count = (UInt32)g_readNotes.size();
+		auto count = static_cast<UInt32>(g_readNotes.size());
 		intfc->WriteRecordData(&count, sizeof(count));
 
 		for (UInt32 formID : g_readNotes)
@@ -242,7 +242,7 @@ void Serialization_Load(const F4SESerializationInterface* intfc)
 class ScaleformGetVersion : public GFxFunctionHandler
 {
 public:
-	virtual void Invoke(Args* args)
+	void Invoke(Args* args) override
 	{
 		args->result->SetUInt(2);
 	}
@@ -251,7 +251,7 @@ public:
 class ScaleformIsNoteRead : public GFxFunctionHandler
 {
 public:
-	virtual void Invoke(Args* args)
+	void Invoke(Args* args) override
 	{
 		if (args->numArgs < 1) { args->result->SetBool(false); return; }
 		UInt32 formID = args->args[0].GetUInt();
@@ -262,12 +262,13 @@ public:
 class ScaleformGetReadCount : public GFxFunctionHandler
 {
 public:
-	virtual void Invoke(Args* args)
+	void Invoke(Args* args) override
 	{
-		args->result->SetUInt((UInt32)g_readNotes.size());
+		args->result->SetUInt(static_cast<UInt32>(g_readNotes.size()));
 	}
 };
 
+// NOLINTNEXTLINE(readability-non-const-parameter) — signature fixed by F4SE's Register API
 bool ScaleformCallback(GFxMovieView* view, GFxValue* value)
 {
 	GFxMovieRoot* movieRoot = view->movieRoot;
@@ -295,7 +296,7 @@ static GFxMovieRoot* GetPipboyMovieRoot()
 	return menu->movie->movieRoot;
 }
 
-static bool GetSelectedReadableItem(GFxMovieRoot* movieRoot, UInt32& formIDOut)
+static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, UInt32& formIDOut)
 {
 	GFxValue selectedEntry;
 	if (!movieRoot->GetVariable(&selectedEntry, "root.Menu_mc.CurrentPage.List_mc.selectedEntry"))
@@ -371,14 +372,6 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 		if (g_cfgSuffix[0] && strstr(text, g_cfgSuffix))
 			continue;
 
-		// Find end of [Tag] prefix — FallUI strips these during parsing
-		const char* tagEnd = text;
-		if (text[0] == '[')
-		{
-			const char* bracket = strchr(text, ']');
-			if (bracket) tagEnd = bracket + 1;
-		}
-
 		// Build modified text — suffix only. Alpha dimming is handled
 		// separately by the renderer alpha code in the AdvanceMovie hook.
 		if (!g_cfgSuffix[0])
@@ -430,9 +423,9 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 class MenuEventHandler : public BSTEventSink<MenuOpenCloseEvent>
 {
 public:
-	virtual ~MenuEventHandler() {}
+	~MenuEventHandler() override = default;
 
-	virtual EventResult ReceiveEvent(MenuOpenCloseEvent* evn, void* dispatcher) override
+	EventResult ReceiveEvent(MenuOpenCloseEvent* evn, void* dispatcher) override
 	{
 		const char* name = evn->menuName.c_str();
 
@@ -444,14 +437,12 @@ public:
 
 			if (isBookMenu || isTerminalMenu)
 			{
-				GFxMovieRoot* movieRoot = GetPipboyMovieRoot();
-				if (movieRoot)
+				if (GFxMovieRoot* movieRoot = GetPipboyMovieRoot())
 				{
 					UInt32 formID = 0;
 					if (GetSelectedReadableItem(movieRoot, formID))
 					{
-						bool isNew = g_readNotes.insert(formID).second;
-						if (isNew)
+						if ([[maybe_unused]] bool isNew = g_readNotes.insert(formID).second)
 						{
 							LOG(1, "UnreadNotes: Marked FormID %08X as read (total: %u)",
 								formID, g_readNotes.size());
@@ -478,18 +469,16 @@ static MenuEventHandler g_menuEventHandler;
 // ============================================================================
 // F4SE Message Handler
 // ============================================================================
+// NOLINTNEXTLINE(readability-non-const-parameter) — signature fixed by F4SE's EventCallback typedef
 void OnF4SEMessage(F4SEMessagingInterface::Message* msg)
 {
 	if (msg->type == F4SEMessagingInterface::kMessage_GameDataReady)
 	{
-		bool isReady = reinterpret_cast<bool>(msg->data);
-		if (isReady)
+		// F4SE packs the bool directly into the data pointer field (not a pointer to a bool)
+		if (bool isReady = msg->data != nullptr; isReady && *g_ui)
 		{
-			if (*g_ui)
-			{
-				(*g_ui)->menuOpenCloseEventSource.AddEventSink(&g_menuEventHandler);
-				LOG(0, "UnreadNotes: Menu event handler registered");
-			}
+			(*g_ui)->menuOpenCloseEventSource.AddEventSink(&g_menuEventHandler);
+			LOG(0, "UnreadNotes: Menu event handler registered");
 		}
 	}
 }
@@ -503,8 +492,8 @@ void OnF4SEMessage(F4SEMessagingInterface::Message* msg)
 // immediately — UITask changes happen after Scaleform commits the frame,
 // but AdvanceMovie runs during the frame update.
 
-typedef void (*_AdvanceMovie_Original)(GameMenuBase*, float, void*);
-_AdvanceMovie_Original AdvanceMovie_Original = nullptr;
+using AdvanceMovie_Fn = void (*)(GameMenuBase*, float, void*);
+AdvanceMovie_Fn AdvanceMovie_Original = nullptr;
 RelocAddr<uintptr_t> AdvanceMovie_Addr(0x0210EED0);
 
 void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
@@ -528,7 +517,7 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 		return;
 
 	IMenu* pipMenu = (*g_ui)->GetMenu(pipboyName);
-	if ((IMenu*)menu != pipMenu)
+	if (static_cast<IMenu*>(menu) != pipMenu)
 		return;
 
 	// Get entryList
@@ -611,7 +600,7 @@ applyAlpha:
 	GFxValue numRendVal;
 	if (!movieRoot->GetVariable(&numRendVal, pathBuf))
 		return;
-	int numRenderers = (int)numRendVal.GetNumber();
+	auto numRenderers = static_cast<int>(numRendVal.GetNumber());
 
 	for (int i = 0; i < numRenderers && i < 50; i++)
 	{
@@ -627,8 +616,8 @@ applyAlpha:
 			!renderer.GetMember("itemIndex", &itemIndexVal))
 			continue;
 
-		int itemIndex = (int)itemIndexVal.GetNumber();
-		if (itemIndex < 0 || itemIndex >= (int)entryCount)
+		auto itemIndex = static_cast<int>(itemIndexVal.GetNumber());
+		if (itemIndex < 0 || itemIndex >= static_cast<int>(entryCount))
 			continue;
 
 		GFxValue dataEntry;
@@ -650,7 +639,7 @@ applyAlpha:
 					dataEntry.GetMember("formID", &formIDVal))
 				{
 					if (g_readNotes.count(formIDVal.GetUInt()) > 0)
-						targetAlpha = (double)g_cfgBrightness;
+						targetAlpha = static_cast<double>(g_cfgBrightness);
 				}
 			}
 		}
@@ -663,7 +652,7 @@ applyAlpha:
 	// Performance logging — log every 60th frame to avoid spam
 	QueryPerformanceCounter(&perfEnd);
 	QueryPerformanceFrequency(&perfFreq);
-	double microseconds = (double)(perfEnd.QuadPart - perfStart.QuadPart) * 1000000.0 / perfFreq.QuadPart;
+	double microseconds = static_cast<double>(perfEnd.QuadPart - perfStart.QuadPart) * 1000000.0 / static_cast<double>(perfFreq.QuadPart);
 
 	static int s_frameCount = 0;
 	static double s_totalUs = 0;
@@ -684,7 +673,7 @@ applyAlpha:
 
 static void InstallAdvanceMovieHook()
 {
-	UInt8* funcStart = (UInt8*)AdvanceMovie_Addr.GetUIntPtr();
+	auto* funcStart = reinterpret_cast<UInt8*>(AdvanceMovie_Addr.GetUIntPtr());
 	LOG(2, "UnreadNotes: AdvanceMovie at %p, first bytes: %02X %02X %02X %02X %02X %02X",
 		funcStart, funcStart[0], funcStart[1], funcStart[2],
 		funcStart[3], funcStart[4], funcStart[5]);
@@ -696,7 +685,7 @@ static void InstallAdvanceMovieHook()
 			Xbyak::Label retnLabel;
 
 			// Reproduce original function prologue (first 6 bytes replaced by hook)
-			UInt8* src = (UInt8*)origAddr;
+			auto* src = reinterpret_cast<UInt8*>(origAddr);
 			for (int i = 0; i < 6; i++)
 				db(src[i]);
 
@@ -712,10 +701,10 @@ static void InstallAdvanceMovieHook()
 	AdvanceMovie_Code code(codeBuf, AdvanceMovie_Addr.GetUIntPtr());
 	g_localTrampoline.EndAlloc(code.getCurr());
 
-	AdvanceMovie_Original = (_AdvanceMovie_Original)codeBuf;
+	AdvanceMovie_Original = reinterpret_cast<AdvanceMovie_Fn>(codeBuf);
 
 	g_branchTrampoline.Write6Branch(AdvanceMovie_Addr.GetUIntPtr(),
-		(uintptr_t)AdvanceMovie_Hook);
+		reinterpret_cast<uintptr_t>(AdvanceMovie_Hook));
 
 	LOG(0, "UnreadNotes: AdvanceMovie hook installed");
 }
@@ -729,7 +718,7 @@ extern "C"
 
 __declspec(dllexport) bool F4SEPlugin_Query(const F4SEInterface* f4se, PluginInfo* info)
 {
-	gLog.OpenRelative(CSIDL_MYDOCUMENTS, "\\My Games\\Fallout4\\F4SE\\UnreadNotes.log");
+	IDebugLog::OpenRelative(CSIDL_MYDOCUMENTS, R"(\My Games\Fallout4\F4SE\UnreadNotes.log)");
 
 	info->infoVersion = PluginInfo::kInfoVersion;
 	info->name = "UnreadNotes";
@@ -754,7 +743,7 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 	g_pluginHandle = f4se->GetPluginHandle();
 
 	// --- Scaleform ---
-	F4SEScaleformInterface* scaleform = (F4SEScaleformInterface*)f4se->QueryInterface(kInterface_Scaleform);
+	auto* scaleform = static_cast<F4SEScaleformInterface*>(f4se->QueryInterface(kInterface_Scaleform));
 	if (!scaleform)
 	{
 		_FATALERROR("UnreadNotes: couldn't get Scaleform interface");
@@ -763,7 +752,7 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 	scaleform->Register("UnreadNotes", ScaleformCallback);
 
 	// --- Serialization ---
-	F4SESerializationInterface* serialization = (F4SESerializationInterface*)f4se->QueryInterface(kInterface_Serialization);
+	auto* serialization = static_cast<F4SESerializationInterface*>(f4se->QueryInterface(kInterface_Serialization));
 	if (!serialization)
 	{
 		_FATALERROR("UnreadNotes: couldn't get Serialization interface");
@@ -775,7 +764,7 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 	serialization->SetLoadCallback(g_pluginHandle, Serialization_Load);
 
 	// --- Task ---
-	g_taskInterface = (F4SETaskInterface*)f4se->QueryInterface(kInterface_Task);
+	g_taskInterface = static_cast<F4SETaskInterface*>(f4se->QueryInterface(kInterface_Task));
 	if (!g_taskInterface)
 	{
 		_FATALERROR("UnreadNotes: couldn't get Task interface");
@@ -783,7 +772,7 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 	}
 
 	// --- Messaging ---
-	g_messaging = (F4SEMessagingInterface*)f4se->QueryInterface(kInterface_Messaging);
+	g_messaging = static_cast<F4SEMessagingInterface*>(f4se->QueryInterface(kInterface_Messaging));
 	if (!g_messaging)
 	{
 		_FATALERROR("UnreadNotes: couldn't get Messaging interface");

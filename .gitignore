@@ -1,4 +1,9 @@
 build/
+cmake-build-*/
+
+# IDE workspace metadata (per-user, not shared)
+.idea/
+.vs/
 
 # SWF working files — decompiled sources, P-code exports, backups, patches
 swf_dump/

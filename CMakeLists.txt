@@ -10,6 +10,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(UnreadNotes VERSION 1.0.0 LANGUAGES CXX)
 
+# Force static release CRT (/MT) in all configs — including Debug.
+# The prebuilt common_vc11.lib and f4se_common.lib were built with /MT,
+# so our code must match or the linker throws LNK2038 _ITERATOR_DEBUG_LEVEL
+# and RuntimeLibrary mismatches. Using /MTd in Debug would be "more correct"
+# in isolation but can't link against release-CRT libs.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
 # Where the F4SE source code lives (headers + libraries we link against)
 set(F4SE_SRC "C:/games/GOG Galaxy/Games/Fallout 4 GOTY/src")
 
@@ -84,7 +91,7 @@ target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 # types everything uses: UInt8, UInt16, UInt32, UInt64, SInt32, etc.
 # Without this, nothing compiles because PluginAPI.h uses UInt32 without
 # including the header that defines it. Very C++. Much implicit.
-target_compile_options(${PROJECT_NAME} PRIVATE /MT /FI"common/IPrefix.h")
+target_compile_options(${PROJECT_NAME} PRIVATE /FIcommon/IPrefix.h)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
 	WIN32_LEAN_AND_MEAN
 	RUNTIME
