@@ -7,6 +7,7 @@ An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read t
 - **Read items dimmed** — configurable opacity applied to the entire row (text, item counts, icons)
 - **Unread items sorted to top** of the list within each subcategory
 - **"(Read)" suffix** on read item names (configurable)
+- **Tracks notes, text holotapes, and audio holotapes** — every readable/listenable item type
 - **Works with all FallUI colour schemes** — alpha-based dimming, not colour replacement
 - **Persists across saves** via F4SE cosave system
 - **Survives mod load order changes** — FormIDs resolved on load
@@ -15,7 +16,10 @@ An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read t
 
 ## How it works
 
-The plugin tracks notes and holotapes read through the Pip-Boy inventory. When you open a note (BookMenu) or holotape (TerminalMenu) from the Pip-Boy, the item is marked as read. Read status is saved with your game save.
+The plugin tracks notes and holotapes read through the Pip-Boy inventory. Detection uses two mechanisms:
+
+- **Notes and text holotapes** — caught via `MenuOpenCloseEvent` when `BookMenu` or `TerminalMenu` opens while the Pip-Boy is also open. The currently-selected Pip-Boy item is marked as read.
+- **Audio holotapes** — caught by polling the `HolotapePlaying` flag on the Pip-Boy's Flash data object and edge-detecting the `false→true` transition. The currently-selected item at that moment is the one being played. This works even for tapes that play in the background without opening any other menu.
 
 An AdvanceMovie hook runs inside the game's per-frame menu update to modify the inventory list data and apply alpha dimming to renderers — ensuring changes display immediately and persist across tab switches.
 

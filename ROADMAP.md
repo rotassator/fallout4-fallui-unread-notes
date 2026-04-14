@@ -1,7 +1,8 @@
 # UnreadNotes — Roadmap & Ideas
 
 ## Current State (v0.2 — Working)
-- Read tracking via MenuOpenCloseEvent (BookMenu/TerminalMenu)
+- Read tracking for notes and text holotapes via MenuOpenCloseEvent (BookMenu/TerminalMenu)
+- Read tracking for audio holotapes via `DataObj.HolotapePlaying` edge detection
 - Cosave persistence across saves
 - Renderer alpha dimming (whole row: text, counts, icons)
 - Configurable "(Read)" suffix
@@ -26,10 +27,11 @@
 
 ## Features — Near Term
 - [x] ~~Configurable logging levels~~ — DONE. iLogLevel=0-2. Perf stats gated behind level 2.
-- [ ] **Unified read-tracking** — currently MarkAsRead only fires when BookMenu/TerminalMenu opens while PipboyMenu is also open. Investigate getting the formID from BookMenu/TerminalMenu directly (game engine's "currently viewed item"), which would cover both Pip-Boy reads AND world reads. Would REPLACE the current PipboyMenu-dependent approach — one unified code path.
+- [x] ~~Audio holotape detection~~ — DONE. Polls `root.Menu_mc.DataObj.HolotapePlaying` in AdvanceMovie_Hook and edge-detects the false→true transition. The tape-loading animation briefly drops the flag between plays, so seamless swaps (new tape without explicit stop) produce detectable cycles. First-sample suppression prevents spurious marks when reopening the Pipboy mid-playback.
+- [ ] **Unified read-tracking for world reads** — BookMenu/TerminalMenu detection only fires while PipboyMenu is also open. Reading a note/holotape from the world (on a desk, in a terminal) doesn't mark it. Investigate getting the formID from BookMenu/TerminalMenu directly rather than via PipboyMenu selection lookup — would cover both contexts with one code path.
 - [ ] Option to use a prefix instead of/as well as suffix (e.g. prepend a marker character)
-- [ ] Games category (Grognak, Pipfall, etc.) — check if they have a distinguishable filterFlag
-- [ ] Misc notes (filterFlag 0x200 — recipes, schematics, contracts like Shelley's contract) — appear in Notes category but don't open BookMenu. Would need a different "read" trigger (selection tracking?), or let users manually mark them.
+- [ ] Games category (Grognak, Pipfall, etc.) — check if they have a distinguishable filterFlag. Audio-holotape detection already catches game cartridges if they set HolotapePlaying; worth verifying.
+- [ ] Misc notes (filterFlag 0x200 — recipes, schematics, contracts like Shelley's contract) — appear in Notes category but don't open BookMenu. Could potentially reuse the selection-at-transition pattern from audio holotape detection if we can find a similar Flash-side flag.
 
 ## Features — Ideas (no commitment)
 - [ ] MCM integration (replace or supplement INI config) — INI works fine, MCM is nice-to-have for the subset of users who prefer it. Deferred.
@@ -47,6 +49,9 @@
 - [ ] Proper git history: squash/clean experimental commits before merging to develop
 
 ## Publishing
+Audio holotape detection (the last functional blocker) is resolved.
+Remaining items are mostly documentation and release packaging.
+
 - [ ] NexusMods page — full rewrite of description for v2 (pure C++ approach, no SWF patches)
 - [ ] New screenshots showing dimming, "(Read)" suffix, sorting, config options
 - [ ] Remove original mod file from NexusMods (old SWF-patching version)
