@@ -496,19 +496,69 @@ using AdvanceMovie_Fn = void (*)(GameMenuBase*, float, void*);
 AdvanceMovie_Fn AdvanceMovie_Original = nullptr;
 RelocAddr<uintptr_t> AdvanceMovie_Addr(0x0210EED0);
 
+// Detect a holotape starting playback via the PipboyMenu.DataObj.HolotapePlaying
+// flag (public Flash field populated by the game via PopulatePipboyInfoObj).
+// Runs every frame the Pipboy is open. Edge-detection only: we mark on the
+// false→true transition, NOT on the level. This is essential because an audio
+// holotape keeps playing while the player navigates the Pipboy (and even after
+// they close it), and we must not keep marking whichever item they hover.
+static void DetectHolotapePlayback(GFxMovieRoot* movieRoot)
+{
+	static bool s_prevPlaying = false;
+	static bool s_initialized = false;
+
+	GFxValue playingVal;
+	bool currentPlaying = false;
+	if (movieRoot->GetVariable(&playingVal, "root.Menu_mc.DataObj.HolotapePlaying"))
+		currentPlaying = playingVal.GetBool();
+
+	// First-ever sample: just record state, don't fire. Handles the case where
+	// the player loads a save (or reopens the Pipboy) mid-playback — we'd
+	// otherwise see a false→true transition that isn't a real "just played".
+	if (!s_initialized)
+	{
+		s_prevPlaying = currentPlaying;
+		s_initialized = true;
+		return;
+	}
+
+	if (currentPlaying == s_prevPlaying)
+		return;
+
+	// Edge detected. Log both directions at level 2 — useful for diagnosing
+	// user bug reports ("why didn't my holotape get marked?") without
+	// flooding the log like a per-frame heartbeat would.
+	UInt32 formID = 0;
+	bool haveSelection = GetSelectedReadableItem(movieRoot, formID);
+
+	LOG(2, "UnreadNotes: Holotape transition %s→%s — selected: %s%08X",
+		s_prevPlaying  ? "true"  : "false",
+		currentPlaying ? "true"  : "false",
+		haveSelection  ? ""      : "(none) ",
+		haveSelection  ? formID  : 0);
+
+	// Mark only on false→true. Each new holotape produces its own transition
+	// cycle: the tape-loading animation briefly sets HolotapePlaying=false
+	// before the new audio starts, so seamless play-next-without-stopping
+	// still generates a detectable edge.
+	if (currentPlaying && !s_prevPlaying && haveSelection)
+	{
+		if (g_readNotes.insert(formID).second)
+		{
+			LOG(1, "UnreadNotes: Marked holotape FormID %08X as read (total: %u)",
+				formID, g_readNotes.size());
+		}
+	}
+
+	s_prevPlaying = currentPlaying;
+}
+
 void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 {
 	// Call original first — lets FallUI do its normal rendering
 	AdvanceMovie_Original(menu, unk0, unk1);
 
-	// Only act when we have read notes to display
-	if (g_readNotes.empty() && !g_markAllReadPending)
-		return;
-
-	LARGE_INTEGER perfStart, perfEnd, perfFreq;
-	QueryPerformanceCounter(&perfStart);
-
-	// Check this is PipboyMenu
+	// Check this is PipboyMenu (runs for every menu's AdvanceMovie, not just us)
 	if (!menu->movie || !menu->movie->movieRoot)
 		return;
 
@@ -520,8 +570,18 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 	if (static_cast<IMenu*>(menu) != pipMenu)
 		return;
 
-	// Get entryList
 	GFxMovieRoot* movieRoot = menu->movie->movieRoot;
+
+	// Holotape playback detection — runs every Pipboy frame regardless of
+	// g_readNotes state (we need to catch the very first play of a session).
+	DetectHolotapePlayback(movieRoot);
+
+	// Visual work only runs when we actually have something to show
+	if (g_readNotes.empty() && !g_markAllReadPending)
+		return;
+
+	LARGE_INTEGER perfStart, perfEnd, perfFreq;
+	QueryPerformanceCounter(&perfStart);
 
 	GFxValue entryList;
 	if (!movieRoot->GetVariable(&entryList, kEntryListPath) || !entryList.IsArray())
