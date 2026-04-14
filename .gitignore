@@ -5,6 +5,9 @@ cmake-build-*/
 .idea/
 .vs/
 
+# Local build helper for running cmake from a non-VS-dev shell
+build.bat
+
 # SWF working files — decompiled sources, P-code exports, backups, patches
 swf_dump/
 pcode_export/
