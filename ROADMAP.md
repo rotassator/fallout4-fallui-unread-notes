@@ -26,13 +26,13 @@
 
 ## Features — Near Term
 - [x] ~~Configurable logging levels~~ — DONE. iLogLevel=0-2. Perf stats gated behind level 2.
-- [ ] MCM integration (replace or supplement INI config)
+- [ ] **Unified read-tracking** — currently MarkAsRead only fires when BookMenu/TerminalMenu opens while PipboyMenu is also open. Investigate getting the formID from BookMenu/TerminalMenu directly (game engine's "currently viewed item"), which would cover both Pip-Boy reads AND world reads. Would REPLACE the current PipboyMenu-dependent approach — one unified code path.
 - [ ] Option to use a prefix instead of/as well as suffix (e.g. prepend a marker character)
 - [ ] Games category (Grognak, Pipfall, etc.) — check if they have a distinguishable filterFlag
 - [ ] Misc notes (filterFlag 0x200 — recipes, schematics, contracts like Shelley's contract) — appear in Notes category but don't open BookMenu. Would need a different "read" trigger (selection tracking?), or let users manually mark them.
 
-## Features — Medium Term
-- [ ] Track reads from non-inventory context — currently MarkAsRead only fires when BookMenu/TerminalMenu opens while PipboyMenu is also open. Investigate getting the formID from BookMenu/TerminalMenu directly (game engine's "currently viewed item"), which would cover both Pip-Boy reads AND world reads. Would REPLACE the current PipboyMenu-dependent approach — one unified code path.
+## Features — Ideas (no commitment)
+- [ ] MCM integration (replace or supplement INI config) — INI works fine, MCM is nice-to-have for the subset of users who prefer it. Deferred.
 
 ## Features — Future
 - [ ] Custom icon for read/unread items (would need FallUI ExtraIcon integration or similar)
