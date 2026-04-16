@@ -1,11 +1,10 @@
 # FallUI - Unread Notes and Holotapes
 
-An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read through your Pip-Boy. Read items are dimmed and sorted below unread items.
+An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read through your Pip-Boy. Read items are dimmed and labelled so you can tell at a glance what you've already seen.
 
 ## Features
 
 - **Read items dimmed** — configurable opacity applied to the entire row (text, item counts, icons)
-- **Unread items sorted to top** of the list within each subcategory
 - **"(Read)" suffix** on read item names (configurable)
 - **Tracks notes, text holotapes, and audio holotapes** — every readable/listenable item type
 - **Works with all FallUI colour schemes** — alpha-based dimming, not colour replacement
@@ -51,9 +50,6 @@ iReadBrightness=50
 ; Text appended to read item names. ASCII only, no < > characters.
 sSuffix=" (Read)"
 
-; Sort read items below unread. 0 = keep original order, 1 = sort to bottom.
-bSortReadToBottom=1
-
 [Debug]
 ; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.
 bResetAll=0
@@ -70,7 +66,7 @@ bMarkAllRead=0
 ## Compatibility
 
 - **FallUI themes**: Works with all colour schemes — dimming is alpha-based.
-- **FallUI sorting**: Integrates with FallUI's sort system via the `textClean` property.
+- **FallUI sorting**: Does not modify FallUI's sort order. Items remain in their natural sort position.
 - **Other F4SE plugins**: No known conflicts. Uses unique cosave ID (`UNrd`) and Scaleform namespace (`UnreadNotes`).
 
 ## Building from source

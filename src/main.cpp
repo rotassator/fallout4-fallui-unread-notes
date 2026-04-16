@@ -40,7 +40,6 @@ static const char* kEntryListPath =
 static int    g_cfgLogLevel = 1;
 static float  g_cfgBrightness = 0.5f;
 static char   g_cfgSuffix[64] = " (Read)";
-static bool   g_cfgSortReadToBottom = true;
 static bool   g_markAllReadPending = false;
 
 // Log macro: only logs if current level >= required level
@@ -76,11 +75,6 @@ static void CreateDefaultConfig(const char* path)
 		"; font doesn't support unicode.\n"
 		"; Default: \" (Read)\"\n"
 		"sSuffix=\" (Read)\"\n"
-		"\n"
-		"; Sort read items below unread items in the list.\n"
-		"; 0 = keep original sort order, 1 = read items sort to bottom.\n"
-		"; Default: 1\n"
-		"bSortReadToBottom=1\n"
 		"\n"
 		"[Debug]\n"
 		"; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.\n"
@@ -139,10 +133,8 @@ static void LoadConfig()
 		strncpy_s(g_cfgSuffix, sanitised, sizeof(g_cfgSuffix) - 1);
 	}
 
-	g_cfgSortReadToBottom = GetPrivateProfileIntA("Display", "bSortReadToBottom", 1, iniPath) != 0;
-
-	LOG(0, "UnreadNotes: Config — brightness=%d%% suffix=\"%s\" sort=%d logLevel=%d",
-		static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgSortReadToBottom, g_cfgLogLevel);
+	LOG(0, "UnreadNotes: Config — brightness=%d%% suffix=\"%s\" logLevel=%d",
+		static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgLogLevel);
 
 	// Debug commands — triggered via INI, auto-reset after use
 	if (GetPrivateProfileIntA("Debug", "bResetAll", 0, iniPath) != 0)
@@ -380,26 +372,6 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 		char buf[512];
 		snprintf(buf, sizeof(buf), "%s%s", text, g_cfgSuffix);
 
-		// Modify sort key to push read items to bottom of subcategory
-		if (g_cfgSortReadToBottom)
-		{
-			GFxValue tcVal;
-			if (dataEntry.HasMember("textClean") &&
-				dataEntry.GetMember("textClean", &tcVal) &&
-				tcVal.GetType() == GFxValue::kType_String)
-			{
-				const char* tc = tcVal.GetString();
-				if (tc[0] != '~')
-				{
-					char newClean[512];
-					snprintf(newClean, sizeof(newClean), "~%s", tc);
-					GFxValue ncv;
-					movieRoot->CreateString(&ncv, newClean);
-					dataEntry.SetMember("textClean", &ncv);
-				}
-			}
-		}
-
 		GFxValue newTextVal;
 		movieRoot->CreateString(&newTextVal, buf);
 		dataEntry.SetMember("text", &newTextVal);
@@ -502,7 +474,7 @@ RelocAddr<uintptr_t> AdvanceMovie_Addr(0x0210EED0);
 // false→true transition, NOT on the level. This is essential because an audio
 // holotape keeps playing while the player navigates the Pipboy (and even after
 // they close it), and we must not keep marking whichever item they hover.
-static void DetectHolotapePlayback(GFxMovieRoot* movieRoot)
+static void DetectHolotapePlayback(const GFxMovieRoot * movieRoot)
 {
 	static bool s_prevPlaying = false;
 	static bool s_initialized = false;

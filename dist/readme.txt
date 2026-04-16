@@ -2,7 +2,8 @@ FallUI - Unread Notes and Holotapes
 ====================================
 
 Tracks which notes and holotapes you've read through your Pip-Boy.
-Read items are dimmed and sorted below unread items.
+Read items are dimmed and labelled so you can tell at a glance what
+you've already seen.
 
 Requirements
 ------------

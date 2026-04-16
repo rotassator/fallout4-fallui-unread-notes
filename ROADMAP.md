@@ -1,16 +1,18 @@
 # UnreadNotes — Roadmap & Ideas
 
-## Current State (v0.2 — Working)
+## Current State (v1.0 — Publish-ready)
 - Read tracking for notes and text holotapes via MenuOpenCloseEvent (BookMenu/TerminalMenu)
 - Read tracking for audio holotapes via `DataObj.HolotapePlaying` edge detection
 - Cosave persistence across saves
 - Renderer alpha dimming (whole row: text, counts, icons)
 - Configurable "(Read)" suffix
-- Sort read items to bottom of subcategory
 - AdvanceMovie hook for per-frame display refresh
 - INI config with hot-reload on Pip-Boy open
 - Debug commands (bResetAll, bMarkAllRead)
-- Per-frame performance profiling (~180us avg, ~1% frame budget)
+- Configurable log levels (0=minimal, 1=normal, 2=debug)
+- Per-frame performance profiling at log level 2 (~180us avg, ~1% frame budget)
+
+**Sort-to-bottom parked** — see `feature/sort-to-bottom-wip` branch. InvalidateData calls during FallUI's sort disturb selectedEntry for audio holotapes. Needs a different approach (possibly hooking FallUI's sort at a lower level).
 
 ## Performance
 - [ ] Optimise quick-check — currently walks entryList every frame looking for the first read item (O(n)). Cache the index of a known read item for O(1) check.
