@@ -319,7 +319,27 @@ static GFxMovieRoot* GetPipboyMovieRoot()
 	return menu->movie->movieRoot;
 }
 
-static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, UInt32& formIDOut)
+struct ReadableItemInfo
+{
+	UInt32 formID = 0;
+	UInt32 filterFlag = 0;
+	char   tag[32]   = {};   // FallUI _tagStr (e.g. "HolotapeT"); empty if absent
+	char   name[128] = {};   // textClean (display name without [Tag] prefix)
+};
+
+// Short label for log messages. Prefers FallUI's _tagStr — it distinguishes
+// audio holotapes ("HolotapeA") from text ("HolotapeT") and hand-written notes
+// ("NoteH") from printed ones. Falls back to filterFlag-derived generic when
+// no tag is present (untagged items, or FallUI not installed).
+static const char* GetItemTypeLabel(const ReadableItemInfo& info)
+{
+	if (info.tag[0])                return info.tag;
+	if (info.filterFlag & 0x80)     return "note";
+	if (info.filterFlag & 0x2000)   return "holotape";
+	return "item";
+}
+
+static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, ReadableItemInfo& out)
 {
 	GFxValue selectedEntry;
 	if (!movieRoot->GetVariable(&selectedEntry, "root.Menu_mc.CurrentPage.List_mc.selectedEntry"))
@@ -339,7 +359,28 @@ static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, UInt32& formI
 	if (!selectedEntry.HasMember("formID") || !selectedEntry.GetMember("formID", &formIDVal))
 		return false;
 
-	formIDOut = formIDVal.GetUInt();
+	out.formID     = formIDVal.GetUInt();
+	out.filterFlag = filterFlag;
+
+	// FallUI's Parser.as pulls the leading [Token] off the item name into _tagStr
+	// and stores the remainder in textClean. Both missing on untagged items or
+	// when FallUI isn't installed — harmless, we fall back to filterFlag/formID.
+	GFxValue tagStrVal;
+	if (selectedEntry.HasMember("_tagStr") &&
+		selectedEntry.GetMember("_tagStr", &tagStrVal) &&
+		tagStrVal.GetType() == GFxValue::kType_String)
+	{
+		strncpy_s(out.tag, tagStrVal.GetString(), sizeof(out.tag) - 1);
+	}
+
+	GFxValue nameVal;
+	if (selectedEntry.HasMember("textClean") &&
+		selectedEntry.GetMember("textClean", &nameVal) &&
+		nameVal.GetType() == GFxValue::kType_String)
+	{
+		strncpy_s(out.name, nameVal.GetString(), sizeof(out.name) - 1);
+	}
+
 	return true;
 }
 
@@ -479,13 +520,14 @@ public:
 			{
 				if (GFxMovieRoot* movieRoot = GetPipboyMovieRoot())
 				{
-					UInt32 formID = 0;
-					if (GetSelectedReadableItem(movieRoot, formID))
+					ReadableItemInfo info;
+					if (GetSelectedReadableItem(movieRoot, info))
 					{
-						if ([[maybe_unused]] bool isNew = g_readNotes.insert(formID).second)
+						if ([[maybe_unused]] bool isNew = g_readNotes.insert(info.formID).second)
 						{
-							LOG(1, "UnreadNotes: Marked FormID %08X as read (total: %u)",
-								formID, static_cast<UInt32>(g_readNotes.size()));
+							LOG(1, "UnreadNotes: Marked %s \"%s\" (FormID %08X) as read via %s (total: %u)",
+								GetItemTypeLabel(info), info.name, info.formID, name,
+								static_cast<UInt32>(g_readNotes.size()));
 						}
 					}
 				}
@@ -568,14 +610,14 @@ static void DetectHolotapePlayback(const GFxMovieRoot * movieRoot)
 	// Edge detected. Log both directions at level 2 — useful for diagnosing
 	// user bug reports ("why didn't my holotape get marked?") without
 	// flooding the log like a per-frame heartbeat would.
-	UInt32 formID = 0;
-	bool haveSelection = GetSelectedReadableItem(movieRoot, formID);
+	ReadableItemInfo info;
+	bool haveSelection = GetSelectedReadableItem(movieRoot, info);
 
 	LOG(2, "UnreadNotes: Holotape transition %s→%s — selected: %s%08X",
 		s_prevPlaying  ? "true"  : "false",
 		currentPlaying ? "true"  : "false",
-		haveSelection  ? ""      : "(none) ",
-		haveSelection  ? formID  : 0);
+		haveSelection  ? ""         : "(none) ",
+		haveSelection  ? info.formID : 0);
 
 	// Mark only on false→true. Each new holotape produces its own transition
 	// cycle: the tape-loading animation briefly sets HolotapePlaying=false
@@ -583,10 +625,11 @@ static void DetectHolotapePlayback(const GFxMovieRoot * movieRoot)
 	// still generates a detectable edge.
 	if (currentPlaying && !s_prevPlaying && haveSelection)
 	{
-		if (g_readNotes.insert(formID).second)
+		if (g_readNotes.insert(info.formID).second)
 		{
-			LOG(1, "UnreadNotes: Marked holotape FormID %08X as read (total: %u)",
-				formID, static_cast<UInt32>(g_readNotes.size()));
+			LOG(1, "UnreadNotes: Marked %s \"%s\" (FormID %08X) as read via HolotapePlaying (total: %u)",
+				GetItemTypeLabel(info), info.name, info.formID,
+				static_cast<UInt32>(g_readNotes.size()));
 		}
 	}
 
