@@ -6,7 +6,7 @@ An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read t
 
 - **Read items dimmed** — configurable opacity applied to the entire row (text, item counts, icons)
 - **"(Read)" suffix** on read item names (configurable)
-- **Tracks notes, text holotapes, and audio holotapes** — every readable/listenable item type
+- **Tracks notes, text holotapes, and audio holotapes**
 - **Works with all FallUI colour schemes** — alpha-based dimming, not colour replacement
 - **Persists across saves** via F4SE cosave system
 - **Survives mod load order changes** — FormIDs resolved on load
@@ -50,11 +50,16 @@ iReadBrightness=50
 ; Text appended to read item names. ASCII only, no < > characters.
 sSuffix=" (Read)"
 
+; Logging level. 0 = minimal, 1 = normal, 2 = debug (includes per-frame perf stats).
+iLogLevel=1
+
 [Debug]
 ; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.
 bResetAll=0
 bMarkAllRead=0
 ```
+
+Log file: `Documents\My Games\Fallout4\F4SE\UnreadNotes.log`
 
 ## Tracked item types
 
