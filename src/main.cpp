@@ -839,7 +839,7 @@ __declspec(dllexport) bool F4SEPlugin_Query(const F4SEInterface* f4se, PluginInf
 
 	info->infoVersion = PluginInfo::kInfoVersion;
 	info->name = "UnreadNotes";
-	info->version = 2;
+	info->version = 1;
 
 	if (f4se->runtimeVersion != RUNTIME_VERSION_1_10_163)
 	{
@@ -853,7 +853,7 @@ __declspec(dllexport) bool F4SEPlugin_Query(const F4SEInterface* f4se, PluginInf
 
 __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 {
-	_MESSAGE("UnreadNotes v2: loading");
+	_MESSAGE("UnreadNotes v1.0.0: loading");
 
 	LoadConfig();
 
@@ -903,7 +903,7 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 		InstallAdvanceMovieHook();
 	}
 
-	_MESSAGE("UnreadNotes v2: loaded successfully");
+	_MESSAGE("UnreadNotes v1.0.0: loaded successfully");
 
 	return true;
 }

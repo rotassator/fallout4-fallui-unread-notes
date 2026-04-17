@@ -55,7 +55,7 @@ Audio holotape detection (the last functional blocker) is resolved.
 Remaining items are mostly documentation and release packaging.
 
 - [ ] NexusMods page — full rewrite of description for v2 (pure C++ approach, no SWF patches)
-- [ ] New screenshots showing dimming, "(Read)" suffix, sorting, config options
+- [ ] New screenshots showing dimming, "(Read)" suffix, config options
 - [ ] Remove original mod file from NexusMods (old SWF-patching version)
 - [ ] Review permissions — more permissive now (no FallUI SWFs, just our DLL)
 - [ ] Thanks/credits section — FallUI/M8r (decompiled source reference), F4SE team
