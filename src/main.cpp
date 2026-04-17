@@ -17,7 +17,6 @@
 
 static PluginHandle g_pluginHandle = kPluginHandle_Invalid;
 static F4SEMessagingInterface* g_messaging = nullptr;
-static F4SETaskInterface* g_taskInterface = nullptr;
 
 
 // ============================================================================
@@ -45,6 +44,39 @@ static bool   g_markAllReadPending = false;
 // Log macro: only logs if current level >= required level
 // 0 = minimal (errors, startup, config), 1 = normal, 2 = debug (perf, per-item)
 #define LOG(level, ...) do { if (g_cfgLogLevel >= level) _MESSAGE(__VA_ARGS__); } while(0)
+
+// Build the absolute path to UnreadNotes.ini next to the running executable.
+// Using GetModuleFileName avoids mis-targeting when a mod organiser launches
+// Fallout 4 with a virtualised or unexpected working directory.
+static const char* GetIniPath()
+{
+	static char s_iniPath[MAX_PATH] = {};
+	if (s_iniPath[0] != '\0')
+		return s_iniPath;
+
+	char exePath[MAX_PATH];
+	DWORD len = GetModuleFileNameA(nullptr, exePath, sizeof(exePath));
+	if (len == 0 || len >= sizeof(exePath))
+	{
+		_MESSAGE("UnreadNotes: WARNING — GetModuleFileName failed (len=%u), using relative path",
+			len);
+		strcpy_s(s_iniPath, R"(Data\F4SE\Plugins\UnreadNotes.ini)");
+		return s_iniPath;
+	}
+
+	for (DWORD i = len; i > 0; i--)
+	{
+		if (exePath[i - 1] == '\\' || exePath[i - 1] == '/')
+		{
+			exePath[i - 1] = '\0';
+			break;
+		}
+	}
+
+	snprintf(s_iniPath, sizeof(s_iniPath),
+		R"(%s\Data\F4SE\Plugins\UnreadNotes.ini)", exePath);
+	return s_iniPath;
+}
 
 static void CreateDefaultConfig(const char* path)
 {
@@ -87,8 +119,7 @@ static void CreateDefaultConfig(const char* path)
 
 static void LoadConfig()
 {
-	char iniPath[MAX_PATH];
-	snprintf(iniPath, sizeof(iniPath), R"(Data\F4SE\Plugins\UnreadNotes.ini)");
+	const char* iniPath = GetIniPath();
 
 	DWORD attrs = GetFileAttributesA(iniPath);
 	if (attrs == INVALID_FILE_ATTRIBUTES)
@@ -139,7 +170,7 @@ static void LoadConfig()
 	// Debug commands — triggered via INI, auto-reset after use
 	if (GetPrivateProfileIntA("Debug", "bResetAll", 0, iniPath) != 0)
 	{
-		_MESSAGE("UnreadNotes: DEBUG — Clearing all %u read notes", g_readNotes.size());
+		_MESSAGE("UnreadNotes: DEBUG — Clearing all %u read notes", static_cast<UInt32>(g_readNotes.size()));
 		g_readNotes.clear();
 		WritePrivateProfileStringA("Debug", "bResetAll", "0", iniPath);
 	}
@@ -164,17 +195,17 @@ static constexpr UInt32 kDataVersion       = 1;
 
 void Serialization_Revert(const F4SESerializationInterface* intfc)
 {
-	LOG(1, "UnreadNotes: Revert — clearing %u read notes", g_readNotes.size());
+	LOG(1, "UnreadNotes: Revert — clearing %u read notes", static_cast<UInt32>(g_readNotes.size()));
 	g_readNotes.clear();
 }
 
 void Serialization_Save(const F4SESerializationInterface* intfc)
 {
-	LOG(1, "UnreadNotes: Save — writing %u read notes", g_readNotes.size());
+	LOG(1, "UnreadNotes: Save — writing %u read notes", static_cast<UInt32>(g_readNotes.size()));
 
 	if (intfc->OpenRecord(kRecordType_ReadNotes, kDataVersion))
 	{
-		auto count = static_cast<UInt32>(g_readNotes.size());
+		auto count = static_cast<UInt32>(static_cast<UInt32>(g_readNotes.size()));
 		intfc->WriteRecordData(&count, sizeof(count));
 
 		for (UInt32 formID : g_readNotes)
@@ -277,7 +308,7 @@ bool ScaleformCallback(GFxMovieView* view, GFxValue* value)
 
 static GFxMovieRoot* GetPipboyMovieRoot()
 {
-	BSFixedString pipboyName("PipboyMenu");
+	static BSFixedString pipboyName("PipboyMenu");
 	if (!(*g_ui)->IsMenuOpen(pipboyName))
 		return nullptr;
 
@@ -316,8 +347,45 @@ static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, UInt32& formI
 // ============================================================================
 // Entry List Data Modification
 // ============================================================================
-// Modifies the text and sort key on entryList data entries for read items.
-// Called from the AdvanceMovie hook (runs inside the game's render cycle).
+// Appends the read-suffix to entryList data entries whose FormID is in
+// g_readNotes. Called from the AdvanceMovie hook (inside the render cycle).
+
+// Fast path: returns true if any read item in entryList still lacks the suffix.
+// Called every frame from AdvanceMovie; lets us skip the full modification walk
+// once FallUI has already applied our suffixes in the current list view.
+static bool QuickCheckEntriesNeedModification(GFxValue& entryList, UInt32 entryCount)
+{
+	if (!g_cfgSuffix[0])
+		return false;  // No suffix configured — nothing to apply or re-check
+
+	for (UInt32 idx = 0; idx < entryCount; idx++)
+	{
+		GFxValue de;
+		entryList.GetElement(idx, &de);
+		if (!de.IsObject()) continue;
+
+		GFxValue ffv;
+		if (!de.HasMember("filterFlag") || !de.GetMember("filterFlag", &ffv))
+			continue;
+		if (!(ffv.GetUInt() & kFilterMask_ReadableItems))
+			continue;
+
+		GFxValue fiv;
+		if (!de.HasMember("formID") || !de.GetMember("formID", &fiv))
+			continue;
+		if (g_readNotes.count(fiv.GetUInt()) == 0)
+			continue;
+
+		GFxValue tv;
+		if (!de.HasMember("text") || !de.GetMember("text", &tv) ||
+			tv.GetType() != GFxValue::kType_String)
+			continue;
+
+		if (!strstr(tv.GetString(), g_cfgSuffix))
+			return true;
+	}
+	return false;
+}
 
 static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UInt32 entryCount)
 {
@@ -381,7 +449,7 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 	if (g_markAllReadPending)
 	{
 		LOG(0, "UnreadNotes: DEBUG — Marked all readable items as read (total: %u)",
-			g_readNotes.size());
+			static_cast<UInt32>(g_readNotes.size()));
 		g_markAllReadPending = false;
 	}
 
@@ -417,7 +485,7 @@ public:
 						if ([[maybe_unused]] bool isNew = g_readNotes.insert(formID).second)
 						{
 							LOG(1, "UnreadNotes: Marked FormID %08X as read (total: %u)",
-								formID, g_readNotes.size());
+								formID, static_cast<UInt32>(g_readNotes.size()));
 						}
 					}
 				}
@@ -518,7 +586,7 @@ static void DetectHolotapePlayback(const GFxMovieRoot * movieRoot)
 		if (g_readNotes.insert(formID).second)
 		{
 			LOG(1, "UnreadNotes: Marked holotape FormID %08X as read (total: %u)",
-				formID, g_readNotes.size());
+				formID, static_cast<UInt32>(g_readNotes.size()));
 		}
 	}
 
@@ -534,7 +602,7 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 	if (!menu->movie || !menu->movie->movieRoot)
 		return;
 
-	BSFixedString pipboyName("PipboyMenu");
+	static BSFixedString pipboyName("PipboyMenu");
 	if (!(*g_ui)->IsMenuOpen(pipboyName))
 		return;
 
@@ -552,7 +620,7 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 	if (g_readNotes.empty() && !g_markAllReadPending)
 		return;
 
-	LARGE_INTEGER perfStart, perfEnd, perfFreq;
+	LARGE_INTEGER perfStart, perfEnd;
 	QueryPerformanceCounter(&perfStart);
 
 	GFxValue entryList;
@@ -562,44 +630,14 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 	UInt32 entryCount = entryList.GetArraySize();
 	if (entryCount == 0) return;
 
-	// Quick check: is the first known read item already modified?
-	// This runs every frame but is very fast — avoids the full walk.
-	if (!g_markAllReadPending)
-	{
-		bool needsModification = false;
-		for (UInt32 idx = 0; idx < entryCount && !needsModification; idx++)
-		{
-			GFxValue de;
-			entryList.GetElement(idx, &de);
-			if (!de.IsObject()) continue;
+	// Fast path: only run the full modification walk when something actually
+	// needs changing. QuickCheck is O(n) but cheap; ModifyEntryListData does
+	// the full work (CreateString, SetMember, InvalidateData) that we want to
+	// avoid on frames where FallUI has already picked up our changes.
+	bool needsTextMods = g_markAllReadPending ||
+		QuickCheckEntriesNeedModification(entryList, entryCount);
 
-			GFxValue ffv;
-			if (!de.HasMember("filterFlag") || !de.GetMember("filterFlag", &ffv))
-				continue;
-			if (!(ffv.GetUInt() & kFilterMask_ReadableItems))
-				continue;
-
-			GFxValue fiv;
-			if (!de.HasMember("formID") || !de.GetMember("formID", &fiv))
-				continue;
-			if (g_readNotes.count(fiv.GetUInt()) == 0)
-				continue;
-
-			GFxValue tv;
-			if (de.HasMember("text") && de.GetMember("text", &tv) &&
-				tv.GetType() == GFxValue::kType_String)
-			{
-				const char* t = tv.GetString();
-				if (!(g_cfgSuffix[0] && strstr(t, g_cfgSuffix)))
-					needsModification = true;
-			}
-		}
-
-		if (!needsModification)
-			goto applyAlpha;  // Text is fine, but still need to update renderer alpha
-	}
-
-	// Apply text modifications (suffix, sort key) and refresh
+	if (needsTextMods)
 	{
 		int modified = ModifyEntryListData(movieRoot, entryList, entryCount);
 
@@ -616,7 +654,6 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 		}
 	}
 
-applyAlpha:
 	// Apply renderer alpha dimming — dims the entire row including item counts.
 	// Runs every frame to handle renderer recycling across subcategory switches.
 	// This is lightweight: 14 renderers × (getChildAt + itemIndex lookup + alpha set).
@@ -681,10 +718,15 @@ applyAlpha:
 		renderer.SetMember("alpha", &alpha);
 	}
 
-	// Performance logging — log every 60th frame to avoid spam
+	// Performance logging — log every 300th frame (~5s at 60fps) at level 2
 	QueryPerformanceCounter(&perfEnd);
-	QueryPerformanceFrequency(&perfFreq);
-	double microseconds = static_cast<double>(perfEnd.QuadPart - perfStart.QuadPart) * 1000000.0 / static_cast<double>(perfFreq.QuadPart);
+
+	static const LARGE_INTEGER s_perfFreq = []{
+		LARGE_INTEGER f;
+		QueryPerformanceFrequency(&f);
+		return f;
+	}();
+	double microseconds = static_cast<double>(perfEnd.QuadPart - perfStart.QuadPart) * 1000000.0 / static_cast<double>(s_perfFreq.QuadPart);
 
 	static int s_frameCount = 0;
 	static double s_totalUs = 0;
@@ -693,7 +735,7 @@ applyAlpha:
 	s_totalUs += microseconds;
 	if (microseconds > s_maxUs) s_maxUs = microseconds;
 
-	if (s_frameCount >= 300)  // Log every ~5 seconds (TODO: gate behind iLogLevel)
+	if (s_frameCount >= 300)
 	{
 		LOG(2, "UnreadNotes: Perf — avg=%.1fus max=%.1fus over %d frames",
 			s_totalUs / s_frameCount, s_maxUs, s_frameCount);
@@ -794,14 +836,6 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 	serialization->SetRevertCallback(g_pluginHandle, Serialization_Revert);
 	serialization->SetSaveCallback(g_pluginHandle, Serialization_Save);
 	serialization->SetLoadCallback(g_pluginHandle, Serialization_Load);
-
-	// --- Task ---
-	g_taskInterface = static_cast<F4SETaskInterface*>(f4se->QueryInterface(kInterface_Task));
-	if (!g_taskInterface)
-	{
-		_FATALERROR("UnreadNotes: couldn't get Task interface");
-		return false;
-	}
 
 	// --- Messaging ---
 	g_messaging = static_cast<F4SEMessagingInterface*>(f4se->QueryInterface(kInterface_Messaging));
