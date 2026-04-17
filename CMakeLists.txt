@@ -10,6 +10,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(UnreadNotes VERSION 1.0.0 LANGUAGES CXX)
 
+# Force static release CRT (/MT) in all configs — including Debug.
+# The prebuilt common_vc11.lib and f4se_common.lib were built with /MT,
+# so our code must match or the linker throws LNK2038 _ITERATOR_DEBUG_LEVEL
+# and RuntimeLibrary mismatches. Using /MTd in Debug would be "more correct"
+# in isolation but can't link against release-CRT libs.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
 # Where the F4SE source code lives (headers + libraries we link against)
 set(F4SE_SRC "C:/games/GOG Galaxy/Games/Fallout 4 GOTY/src")
 
@@ -84,7 +91,7 @@ target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 # types everything uses: UInt8, UInt16, UInt32, UInt64, SInt32, etc.
 # Without this, nothing compiles because PluginAPI.h uses UInt32 without
 # including the header that defines it. Very C++. Much implicit.
-target_compile_options(${PROJECT_NAME} PRIVATE /MT /FI"common/IPrefix.h")
+target_compile_options(${PROJECT_NAME} PRIVATE /FIcommon/IPrefix.h)
 target_compile_definitions(${PROJECT_NAME} PRIVATE
 	WIN32_LEAN_AND_MEAN
 	RUNTIME
@@ -118,16 +125,4 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 		"$<TARGET_FILE:${PROJECT_NAME}>"
 		"${VORTEX_MOD_DIR}/F4SE/Plugins/UnreadNotes.dll"
 	COMMENT "Copying UnreadNotes.dll to dist/ and Vortex mod folder"
-)
-
-# Deploy SWFs to Vortex: run with `cmake --build build --target deploy-swf`
-add_custom_target(deploy-swf
-	COMMAND ${CMAKE_COMMAND} -E make_directory "${VORTEX_MOD_DIR}/Interface"
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${CMAKE_SOURCE_DIR}/dist/Interface/Pipboy_InvPage.swf"
-		"${VORTEX_MOD_DIR}/Interface/Pipboy_InvPage.swf"
-	COMMAND ${CMAKE_COMMAND} -E copy_if_different
-		"${CMAKE_SOURCE_DIR}/dist/Interface/PipboyMenu.swf"
-		"${VORTEX_MOD_DIR}/Interface/PipboyMenu.swf"
-	COMMENT "Copying SWF files to Vortex mod folder"
 )
