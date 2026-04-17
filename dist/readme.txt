@@ -2,7 +2,8 @@ FallUI - Unread Notes and Holotapes
 ====================================
 
 Tracks which notes and holotapes you've read through your Pip-Boy.
-Unread items appear bright and sorted to the top, read items are dimmed.
+Read items are dimmed and labelled so you can tell at a glance what
+you've already seen.
 
 Requirements
 ------------
@@ -12,15 +13,21 @@ Requirements
 
 Installation
 ------------
-Install with your mod manager. Both .swf files must win conflicts
-with FallUI's originals (load after FallUI in your mod manager).
+Install with your mod manager, or copy UnreadNotes.dll into:
+  Data/F4SE/Plugins/UnreadNotes.dll
 
-Manual install: copy the contents of this archive into your
-Fallout 4 Data/ folder.
+A config file (UnreadNotes.ini) is created automatically on first run.
+No SWF files are included — this is a DLL-only plugin.
+
+Configuration
+-------------
+Edit Data/F4SE/Plugins/UnreadNotes.ini to customise. Changes take
+effect on the next Pip-Boy open — no game restart needed.
 
 Uninstalling
 ------------
-Safe to remove mid-playthrough. No permanent changes to your save.
+Safe to remove mid-playthrough. Read status is stored in the F4SE
+cosave alongside your game save.
 
 Source & License
 ----------------
