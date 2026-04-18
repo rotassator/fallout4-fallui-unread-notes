@@ -10,6 +10,7 @@
 #include "common/IDebugLog.h"
 #include "f4se/ScaleformCallbacks.h"
 #include "f4se/GameMenus.h"
+#include "f4se/GameInput.h"
 #include "xbyak/xbyak.h"
 
 #include <shlobj.h>
@@ -24,9 +25,15 @@ static F4SEMessagingInterface* g_messaging = nullptr;
 // ============================================================================
 static std::set<UInt32> g_readNotes;
 
-// Note/holotape filter mask: notes (0x80) | holotapes (0x2000)
-// Misc notes (0x200) excluded — recipes/schematics/contracts aren't readable
+// Narrow mask for auto-detection via BookMenu/TerminalMenu: notes (0x80)
+// and holotapes (0x2000). Misc (0x200) excluded because those items don't
+// open BookMenu when used, so we'd never see a "read" event for them.
 static constexpr UInt32 kFilterMask_ReadableItems = 0x2080;
+
+// Wider mask for manual keypress toggle: also includes misc (0x200) —
+// recipes, schematics, contracts. The user can mark them read/unread
+// themselves since we have no reliable auto-hook for them.
+static constexpr UInt32 kFilterMask_MarkableItems = 0x2280;
 
 // Path to the inventory data array in the PipboyMenu Scaleform movie
 static const char* kEntryListPath =
@@ -39,6 +46,7 @@ static const char* kEntryListPath =
 static int    g_cfgLogLevel = 1;
 static float  g_cfgBrightness = 0.5f;
 static char   g_cfgSuffix[64] = " (Read)";
+static UInt32 g_cfgToggleKey = 0;    // VK code (per UESP's "DirectX Scan Codes" page); 0 = disabled
 static bool   g_markAllReadPending = false;
 
 // Log macro: only logs if current level >= required level
@@ -108,6 +116,15 @@ static void CreateDefaultConfig(const char* path)
 		"; Default: 1\n"
 		"iLogLevel=1\n"
 		"\n"
+		"[Input]\n"
+		"\n"
+		"; Toggle read/unread on the selected Pip-Boy item with a keypress.\n"
+		"; Value is the decimal code from the Fallout CK wiki's scan-code table.\n"
+		"; Commented out by default so no key is claimed until you opt in.\n"
+		"; Reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes\n"
+		"; Suggested unused keys: 189 (\"-\"), 187 (\"=\"), 220 (\"\\\")\n"
+		";iToggleKey=189\n"
+		"\n"
 		"[Debug]\n"
 		"; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.\n"
 		"bResetAll=0\n"
@@ -164,8 +181,32 @@ static void LoadConfig()
 		strncpy_s(g_cfgSuffix, sanitised, sizeof(g_cfgSuffix) - 1);
 	}
 
-	LOG(0, "UnreadNotes: Config — brightness=%d%% suffix=\"%s\" logLevel=%d",
-		static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgLogLevel);
+	g_cfgToggleKey = static_cast<UInt32>(GetPrivateProfileIntA("Input", "iToggleKey", 0, iniPath));
+	if (g_cfgToggleKey > 255)
+	{
+		_MESSAGE("UnreadNotes: WARNING — iToggleKey=%u out of keyboard range, disabling",
+			g_cfgToggleKey);
+		g_cfgToggleKey = 0;
+	}
+
+	// Build a human-readable form of toggleKey for the config log line.
+	char toggleStr[48];
+	if (g_cfgToggleKey == 0)
+	{
+		snprintf(toggleStr, sizeof(toggleStr), "0 (disabled)");
+	}
+	else
+	{
+		char keyName[32] = {};
+		UINT scanCode = MapVirtualKeyA(g_cfgToggleKey, MAPVK_VK_TO_VSC);
+		if (scanCode != 0)
+			GetKeyNameTextA(static_cast<LONG>(scanCode) << 16, keyName, sizeof(keyName));
+		snprintf(toggleStr, sizeof(toggleStr), "%u (%s)",
+			g_cfgToggleKey, keyName[0] ? keyName : "unknown");
+	}
+
+	LOG(0, "UnreadNotes: Config — brightness=%d%% suffix=\"%s\" logLevel=%d toggleKey=%s",
+		static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgLogLevel, toggleStr);
 
 	// Debug commands — triggered via INI, auto-reset after use
 	if (GetPrivateProfileIntA("Debug", "bResetAll", 0, iniPath) != 0)
@@ -336,10 +377,12 @@ static const char* GetItemTypeLabel(const ReadableItemInfo& info)
 	if (info.tag[0])                return info.tag;
 	if (info.filterFlag & 0x80)     return "note";
 	if (info.filterFlag & 0x2000)   return "holotape";
+	if (info.filterFlag & 0x200)    return "misc";
 	return "item";
 }
 
-static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, ReadableItemInfo& out)
+static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, ReadableItemInfo& out,
+	UInt32 filterMask = kFilterMask_ReadableItems)
 {
 	GFxValue selectedEntry;
 	if (!movieRoot->GetVariable(&selectedEntry, "root.Menu_mc.CurrentPage.List_mc.selectedEntry"))
@@ -353,7 +396,7 @@ static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, ReadableItemI
 		return false;
 
 	UInt32 filterFlag = filterFlagVal.GetUInt();
-	if (!(filterFlag & kFilterMask_ReadableItems))
+	if (!(filterFlag & filterMask))
 		return false;
 
 	if (!selectedEntry.HasMember("formID") || !selectedEntry.GetMember("formID", &formIDVal))
@@ -408,7 +451,7 @@ static bool QuickCheckEntriesNeedModification(GFxValue& entryList, UInt32 entryC
 		GFxValue ffv;
 		if (!de.HasMember("filterFlag") || !de.GetMember("filterFlag", &ffv))
 			continue;
-		if (!(ffv.GetUInt() & kFilterMask_ReadableItems))
+		if (!(ffv.GetUInt() & kFilterMask_MarkableItems))
 			continue;
 
 		GFxValue fiv;
@@ -444,7 +487,7 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 			continue;
 
 		UInt32 filterFlag = filterFlagVal.GetUInt();
-		if (!(filterFlag & kFilterMask_ReadableItems))
+		if (!(filterFlag & kFilterMask_MarkableItems))
 			continue;
 
 		GFxValue formIDVal;
@@ -496,6 +539,109 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 
 	return modified;
 }
+
+
+// ============================================================================
+// Input Handler — read/unread toggle on configured keypress
+// ============================================================================
+// Registered with MenuControls::inputEvents. Fires for any keyboard button
+// event while in a menu context; we filter to the configured scan code, then
+// gate on Pip-Boy being open, then toggle g_readNotes membership for the
+// currently selected readable item. Refreshes the list via InvalidateData so
+// the suffix appears/disappears immediately.
+class UnreadNotesInputHandler : public BSInputEventUser
+{
+public:
+	UnreadNotesInputHandler() : BSInputEventUser(true) {}
+	~UnreadNotesInputHandler() override = default;
+
+	void OnButtonEvent(ButtonEvent* inputEvent) override
+	{
+		if (!inputEvent)
+			return;
+
+		if (g_cfgToggleKey == 0)
+			return;
+
+		if (inputEvent->deviceType != InputEvent::kDeviceType_Keyboard)
+			return;
+
+		if (inputEvent->keyMask != g_cfgToggleKey)
+			return;
+
+		// Initial press only — ignore hold-repeat and release.
+		// isDown==1.0 && timer==0.0 is the false→true transition.
+		if (inputEvent->isDown != 1.0f || inputEvent->timer != 0.0f)
+			return;
+
+		GFxMovieRoot* movieRoot = GetPipboyMovieRoot();
+		if (!movieRoot)
+		{
+			LOG(2, "UnreadNotes: Toggle key pressed but Pip-Boy not open");
+			return;
+		}
+
+		ReadableItemInfo info;
+		if (!GetSelectedReadableItem(movieRoot, info, kFilterMask_MarkableItems))
+		{
+			LOG(2, "UnreadNotes: Toggle key pressed but no markable item selected");
+			return;
+		}
+
+		bool wasRead = (g_readNotes.erase(info.formID) > 0);
+		if (!wasRead)
+			g_readNotes.insert(info.formID);
+
+		LOG(1, "UnreadNotes: Toggled %s %s \"%s\" (FormID %08X) (total: %u)",
+			wasRead ? "UNREAD" : "READ",
+			GetItemTypeLabel(info), info.name, info.formID,
+			static_cast<UInt32>(g_readNotes.size()));
+
+		// When flipping to unread, strip our suffix from the entry's text so
+		// the list refresh below shows the clean name. Our ModifyEntryListData
+		// only APPENDS the suffix — it doesn't remove it — so without this the
+		// "(Read)" text lingers until the Pip-Boy fully reopens.
+		if (wasRead && g_cfgSuffix[0])
+		{
+			GFxValue selectedEntry;
+			if (movieRoot->GetVariable(&selectedEntry,
+					"root.Menu_mc.CurrentPage.List_mc.selectedEntry") &&
+				selectedEntry.IsObject())
+			{
+				GFxValue textVal;
+				if (selectedEntry.HasMember("text") &&
+					selectedEntry.GetMember("text", &textVal) &&
+					textVal.GetType() == GFxValue::kType_String)
+				{
+					const char* t = textVal.GetString();
+					size_t tLen = strlen(t);
+					size_t sLen = strlen(g_cfgSuffix);
+					if (tLen >= sLen && strcmp(t + tLen - sLen, g_cfgSuffix) == 0)
+					{
+						char buf[512];
+						snprintf(buf, sizeof(buf), "%.*s",
+							static_cast<int>(tLen - sLen), t);
+						GFxValue clean;
+						movieRoot->CreateString(&clean, buf);
+						selectedEntry.SetMember("text", &clean);
+						LOG(2, "UnreadNotes: Stripped suffix from \"%s\"", info.name);
+					}
+				}
+			}
+		}
+
+		// Force the list to refresh so suffix appears/disappears immediately.
+		// Alpha dimming updates naturally via AdvanceMovie on the next frame.
+		GFxValue listMc;
+		if (movieRoot->GetVariable(&listMc, "root.Menu_mc.CurrentPage.List_mc") &&
+			listMc.IsObject())
+		{
+			listMc.Invoke("InvalidateData", nullptr, nullptr, 0);
+		}
+	}
+};
+
+static UnreadNotesInputHandler g_inputHandler;
 
 
 // ============================================================================
@@ -561,6 +707,19 @@ void OnF4SEMessage(F4SEMessagingInterface::Message* msg)
 		{
 			(*g_ui)->menuOpenCloseEventSource.AddEventSink(&g_menuEventHandler);
 			LOG(0, "UnreadNotes: Menu event handler registered");
+
+			if (*g_menuControls)
+			{
+				auto& arr = (*g_menuControls)->inputEvents;
+				UInt32 before = arr.count;
+				bool ok = arr.Push(&g_inputHandler);
+				LOG(0, "UnreadNotes: Input handler registered (toggleKey=%u, arr %u→%u, push=%d)",
+					g_cfgToggleKey, before, arr.count, ok ? 1 : 0);
+			}
+			else
+			{
+				_MESSAGE("UnreadNotes: WARNING — g_menuControls null, toggle-key feature disabled");
+			}
 		}
 	}
 }
@@ -744,7 +903,7 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 			dataEntry.GetMember("filterFlag", &filterFlagVal))
 		{
 			UInt32 filterFlag = filterFlagVal.GetUInt();
-			if (filterFlag & kFilterMask_ReadableItems)
+			if (filterFlag & kFilterMask_MarkableItems)
 			{
 				GFxValue formIDVal;
 				if (dataEntry.HasMember("formID") &&
@@ -853,7 +1012,7 @@ __declspec(dllexport) bool F4SEPlugin_Query(const F4SEInterface* f4se, PluginInf
 
 __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 {
-	_MESSAGE("UnreadNotes v1.0.0: loading");
+	_MESSAGE("UnreadNotes v1.1.0: loading");
 
 	LoadConfig();
 
@@ -903,7 +1062,7 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 		InstallAdvanceMovieHook();
 	}
 
-	_MESSAGE("UnreadNotes v1.0.0: loaded successfully");
+	_MESSAGE("UnreadNotes v1.1.0: loaded successfully");
 
 	return true;
 }

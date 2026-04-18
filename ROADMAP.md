@@ -28,12 +28,18 @@
 - [x] ~~Suffix character restrictions~~ — DONE. `< >` stripped on load with log warning.
 
 ## Features — Near Term
+
+### From v1.0 user feedback (Nexus)
+- [x] ~~**Read/unread toggle on keypress**~~ — DONE. Configurable scan code under `[Input]`, commented out by default. FallUI's menu dispatch uses Windows VK codes; values match UESP's table directly (no DIK conversion needed). Widened the visual/markable filter to include misc items (0x200) so anything toggled gets the suffix and dim.
+- [ ] **Per-FormID ignore list** — some radiant/procedural notes share FormIDs ("random radiant bounty", "treasure note"), so marking one marks them all. Need an ignore list (probably cosave, since radiant contents are per-save) plus a distinct suffix (e.g. `(-)`).
+- [ ] **Bookmark/highlight tag** — mark an item for later reference, distinct from read state. Likely shares the keypress infrastructure from #1, with a different suffix (e.g. `(*)`).
+
 - [x] ~~Configurable logging levels~~ — DONE. iLogLevel=0-2. Perf stats gated behind level 2.
 - [x] ~~Audio holotape detection~~ — DONE. Polls `root.Menu_mc.DataObj.HolotapePlaying` in AdvanceMovie_Hook and edge-detects the false→true transition. The tape-loading animation briefly drops the flag between plays, so seamless swaps (new tape without explicit stop) produce detectable cycles. First-sample suppression prevents spurious marks when reopening the Pipboy mid-playback.
 - [ ] **Unified read-tracking for world reads** — BookMenu/TerminalMenu detection only fires while PipboyMenu is also open. Reading a note/holotape from the world (on a desk, in a terminal) doesn't mark it. Investigate getting the formID from BookMenu/TerminalMenu directly rather than via PipboyMenu selection lookup — would cover both contexts with one code path.
 - [ ] Option to use a prefix instead of/as well as suffix (e.g. prepend a marker character)
-- [ ] Games category (Grognak, Pipfall, etc.) — check if they have a distinguishable filterFlag. Audio-holotape detection already catches game cartridges if they set HolotapePlaying; worth verifying.
-- [ ] Misc notes (filterFlag 0x200 — recipes, schematics, contracts like Shelley's contract) — appear in Notes category but don't open BookMenu. Could potentially reuse the selection-at-transition pattern from audio holotape detection if we can find a similar Flash-side flag.
+- [x] ~~Games category~~ — PARTIAL. Confirmed they don't trigger `HolotapePlaying` or BookMenu. Manually markable via the toggle key; auto-detection would need a hook on the minigame-launch menu (not yet investigated).
+- [x] ~~Misc notes (filterFlag 0x200 — recipes, schematics, contracts like Shelley's contract)~~ — PARTIAL. Manually markable via the toggle key (included in `kFilterMask_MarkableItems`); auto-detection still not possible since they don't open BookMenu.
 
 ## Features — Ideas (no commitment)
 - [ ] MCM integration (replace or supplement INI config) — INI works fine, MCM is nice-to-have for the subset of users who prefer it. Deferred.

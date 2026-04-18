@@ -6,7 +6,9 @@ An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read t
 
 - **Read items dimmed** — configurable opacity applied to the entire row (text, item counts, icons)
 - **"(Read)" suffix** on read item names (configurable)
+- **Toggle key** — configurable keypress to mark any readable Pip-Boy item as read or unread (notes, holotapes, magazines, game cartridges, misc items)
 - **Tracks notes, text holotapes, and audio holotapes**
+- **Magazines included** — read through the Pip-Boy, they're suffixed and dimmed like notes
 - **Works with all FallUI colour schemes** — alpha-based dimming, not colour replacement
 - **Persists across saves** via F4SE cosave system
 - **Survives mod load order changes** — FormIDs resolved on load
@@ -53,6 +55,15 @@ sSuffix=" (Read)"
 ; Logging level. 0 = minimal, 1 = normal, 2 = debug (includes per-frame perf stats).
 iLogLevel=1
 
+[Input]
+
+; Toggle read/unread on the selected Pip-Boy item with a keypress.
+; Value is the decimal code from the Fallout CK wiki's scan-code table.
+; Commented out by default so no key is claimed until you opt in.
+; Reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes
+; Suggested unused keys: 189 ("-"), 187 ("="), 220 ("\")
+;iToggleKey=189
+
 [Debug]
 ; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.
 bResetAll=0
@@ -63,10 +74,13 @@ Log file: `Documents\My Games\Fallout4\F4SE\UnreadNotes.log`
 
 ## Tracked item types
 
-| Type | filterFlag | Examples |
-|------|-----------|----------|
-| Notes | `0x80` | Quest notes, personal logs, letters |
-| Holotapes | `0x2000` | Audio logs, terminal holotapes |
+| Type        | filterFlag | Examples                                         |
+|-------------|-----------|---------------------------------------------------|
+| Notes       | `0x80`    | Quest notes, personal logs, letters, magazines   |
+| Holotapes   | `0x2000`  | Audio logs, terminal holotapes, game cartridges  |
+| Misc items* | `0x200`   | Recipes, schematics, contracts (Shelley's etc.)  |
+
+*Misc items and game cartridges aren't auto-marked — they don't open the book menu. Use the toggle key.
 
 ## Compatibility
 
