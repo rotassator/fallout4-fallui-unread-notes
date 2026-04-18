@@ -43,6 +43,7 @@
 
 ## Features — Ideas (no commitment)
 - [ ] MCM integration (replace or supplement INI config) — INI works fine, MCM is nice-to-have for the subset of users who prefer it. Deferred.
+- [ ] Quest-marker cube on notes tied to active quests (FO76-style) — user request from Nexus v1.1 comments. Visual side is easy (inject coloured symbol into entry text). Blocker is the detection side: FO4 quest objectives reference aliases rather than specific item FormIDs, so reliably mapping "this objective wants you to read that exact note" would be patchy. Half-working would be worse than nothing.
 
 ## Features — Future
 - [ ] Custom icon for read/unread items (would need FallUI ExtraIcon integration or similar)
