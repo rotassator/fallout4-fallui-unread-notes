@@ -47,6 +47,8 @@ set(F4SE_SOURCES
 	"${F4SE_SRC}/f4se/f4se/ScaleformAPI.cpp"
 	# Game utilities (CRC32, etc.)
 	"${F4SE_SRC}/f4se/f4se/GameUtilities.cpp"
+	# Input (BSInputEventUser, g_menuControls)
+	"${F4SE_SRC}/f4se/f4se/GameInput.cpp"
 	# RelocAddr/RelocPtr base address initialisation
 	"${F4SE_SRC}/f4se/f4se_common/Relocation.cpp"
 )
