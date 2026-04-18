@@ -28,6 +28,12 @@
 - [x] ~~Suffix character restrictions~~ — DONE. `< >` stripped on load with log warning.
 
 ## Features — Near Term
+
+### From v1.0 user feedback (Nexus)
+- [ ] **Read/unread toggle on keypress** — configurable scan code (commented-out default). Pressing the key while an item is selected in the Pip-Boy toggles its read state. UESP DIK reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes
+- [ ] **Per-FormID ignore list** — some radiant/procedural notes share FormIDs ("random radiant bounty", "treasure note"), so marking one marks them all. Need an ignore list (probably cosave, since radiant contents are per-save) plus a distinct suffix (e.g. `(-)`).
+- [ ] **Bookmark/highlight tag** — mark an item for later reference, distinct from read state. Likely shares the keypress infrastructure from #1, with a different suffix (e.g. `(*)`).
+
 - [x] ~~Configurable logging levels~~ — DONE. iLogLevel=0-2. Perf stats gated behind level 2.
 - [x] ~~Audio holotape detection~~ — DONE. Polls `root.Menu_mc.DataObj.HolotapePlaying` in AdvanceMovie_Hook and edge-detects the false→true transition. The tape-loading animation briefly drops the flag between plays, so seamless swaps (new tape without explicit stop) produce detectable cycles. First-sample suppression prevents spurious marks when reopening the Pipboy mid-playback.
 - [ ] **Unified read-tracking for world reads** — BookMenu/TerminalMenu detection only fires while PipboyMenu is also open. Reading a note/holotape from the world (on a desk, in a terminal) doesn't mark it. Investigate getting the formID from BookMenu/TerminalMenu directly rather than via PipboyMenu selection lookup — would cover both contexts with one code path.
