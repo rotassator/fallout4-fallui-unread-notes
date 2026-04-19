@@ -2,6 +2,25 @@
 
 All notable changes to UnreadNotes will be documented in this file.
 
+## [1.2.0] — Mark for later / excluded items
+
+- Configurable second keypress (`iMarkKey` under `[Input]`) flags the selected
+  item as "marked". Marked items stay bright, get a distinct suffix
+  (`sMarkSuffix`, default `" (*)"`), and are skipped by auto-mark-as-read.
+- Handles two user-requested cases with one mechanism:
+  - Config holotapes (SKK Global Stash et al.) that you don't want dimmed
+    just because you opened them.
+  - Radiant / procedural notes that reuse FormIDs across contexts — marking
+    one no longer marks them all as read.
+- Toggle key and mark key are mutually exclusive: marking a read item clears
+  read, toggling a marked item clears marked. An item is always in exactly
+  one of three states: unread / read / marked.
+- Cosave: new `MkNt` record persists the marked set alongside `RdNt`.
+  Loader is back-compatible with 1.1 cosaves and bounds-checks record data.
+- Warnings in the log if you configure the same key or suffix for both
+  toggle and mark (misconfig would silently disable the mark branch or make
+  states visually indistinguishable).
+
 ## [1.1.0] — Toggle key and broader coverage
 
 - Configurable keypress to toggle read/unread on the selected Pip-Boy item.
