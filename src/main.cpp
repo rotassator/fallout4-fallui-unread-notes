@@ -24,6 +24,7 @@ static F4SEMessagingInterface* g_messaging = nullptr;
 // Read Tracking Data
 // ============================================================================
 static std::set<UInt32> g_readNotes;
+static std::set<UInt32> g_markedNotes;  // User-flagged items: stay bright, distinct suffix, excluded from auto-read
 
 // Narrow mask for auto-detection via BookMenu/TerminalMenu: notes (0x80)
 // and holotapes (0x2000). Misc (0x200) excluded because those items don't
@@ -46,12 +47,49 @@ static const char* kEntryListPath =
 static int    g_cfgLogLevel = 1;
 static float  g_cfgBrightness = 0.5f;
 static char   g_cfgSuffix[64] = " (Read)";
+static char   g_cfgMarkSuffix[64] = " (*)";
 static UInt32 g_cfgToggleKey = 0;    // VK code (per UESP's "DirectX Scan Codes" page); 0 = disabled
+static UInt32 g_cfgMarkKey = 0;      // VK code for mark toggle; 0 = disabled
 static bool   g_markAllReadPending = false;
 
 // Log macro: only logs if current level >= required level
 // 0 = minimal (errors, startup, config), 1 = normal, 2 = debug (perf, per-item)
 #define LOG(level, ...) do { if (g_cfgLogLevel >= level) _MESSAGE(__VA_ARGS__); } while(0)
+
+// Format "N (KEYNAME)" for a VK code, or "0 (disabled)" when disabled.
+// Writes into the provided buffer. Used in the startup config log.
+static void FormatKeyForLog(UInt32 vkCode, char* out, size_t outSize)
+{
+	if (vkCode == 0)
+	{
+		snprintf(out, outSize, "0 (disabled)");
+		return;
+	}
+
+	char keyName[32] = {};
+	UINT scanCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC);
+	if (scanCode != 0)
+		GetKeyNameTextA(static_cast<LONG>(scanCode) << 16, keyName, sizeof(keyName));
+	snprintf(out, outSize, "%u (%s)", vkCode, keyName[0] ? keyName : "unknown");
+}
+
+// Sanitise a suffix value by stripping `<` and `>`, which break FallUI's
+// HTML text mode. Writes result into out; logs a warning if anything was
+// stripped. Used for both sSuffix and sMarkSuffix.
+static void SanitiseSuffix(const char* rawBuf, char* out, size_t outSize, const char* fieldName)
+{
+	size_t j = 0;
+	for (size_t i = 0; rawBuf[i] && j + 1 < outSize; i++)
+	{
+		if (rawBuf[i] != '<' && rawBuf[i] != '>')
+			out[j++] = rawBuf[i];
+	}
+	out[j] = '\0';
+
+	if (j != strlen(rawBuf))
+		_MESSAGE("UnreadNotes: WARNING — stripped < > from %s: \"%s\" -> \"%s\"",
+			fieldName, rawBuf, out);
+}
 
 // Build the absolute path to UnreadNotes.ini next to the running executable.
 // Using GetModuleFileName avoids mis-targeting when a mod organiser launches
@@ -112,6 +150,12 @@ static void CreateDefaultConfig(const char* path)
 		"; Default: \" (Read)\"\n"
 		"sSuffix=\" (Read)\"\n"
 		"\n"
+		"; Text appended to MARKED item names (items flagged with the mark key —\n"
+		"; stay bright and are excluded from auto-mark-as-read).\n"
+		"; Same ASCII-only rules as sSuffix.\n"
+		"; Default: \" (*)\"\n"
+		"sMarkSuffix=\" (*)\"\n"
+		"\n"
 		"; Logging level. 0 = minimal, 1 = normal, 2 = debug (includes perf stats).\n"
 		"; Default: 1\n"
 		"iLogLevel=1\n"
@@ -124,6 +168,12 @@ static void CreateDefaultConfig(const char* path)
 		"; Reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes\n"
 		"; Suggested unused keys: 189 (\"-\"), 187 (\"=\"), 220 (\"\\\")\n"
 		";iToggleKey=189\n"
+		"\n"
+		"; Mark/unmark the selected item. Marked items stay bright, get sMarkSuffix,\n"
+		"; and are skipped by auto-mark-as-read. Useful for config holotapes and\n"
+		"; notes whose FormIDs are reused across different in-game contexts.\n"
+		"; Same reference as iToggleKey; pick a different unused key.\n"
+		";iMarkKey=187\n"
 		"\n"
 		"[Debug]\n"
 		"; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.\n"
@@ -162,51 +212,39 @@ static void LoadConfig()
 
 	char suffixBuf[64] = {};
 	GetPrivateProfileStringA("Display", "sSuffix", " (Read)", suffixBuf, sizeof(suffixBuf), iniPath);
-
-	// Sanitise suffix: strip < > which break FallUI's HTML text mode.
 	{
 		char sanitised[64] = {};
-		int j = 0;
-		for (int i = 0; suffixBuf[i] && j < static_cast<int>(sizeof(sanitised)) - 1; i++)
-		{
-			if (suffixBuf[i] != '<' && suffixBuf[i] != '>')
-				sanitised[j++] = suffixBuf[i];
-		}
-		sanitised[j] = '\0';
-
-		if (j != static_cast<int>(strlen(suffixBuf)))
-			_MESSAGE("UnreadNotes: WARNING — stripped < > from sSuffix: \"%s\" -> \"%s\"",
-				suffixBuf, sanitised);
-
+		SanitiseSuffix(suffixBuf, sanitised, sizeof(sanitised), "sSuffix");
 		strncpy_s(g_cfgSuffix, sanitised, sizeof(g_cfgSuffix) - 1);
 	}
 
-	g_cfgToggleKey = static_cast<UInt32>(GetPrivateProfileIntA("Input", "iToggleKey", 0, iniPath));
-	if (g_cfgToggleKey > 255)
+	char markSuffixBuf[64] = {};
+	GetPrivateProfileStringA("Display", "sMarkSuffix", " (*)", markSuffixBuf, sizeof(markSuffixBuf), iniPath);
 	{
-		_MESSAGE("UnreadNotes: WARNING — iToggleKey=%u out of keyboard range, disabling",
-			g_cfgToggleKey);
-		g_cfgToggleKey = 0;
+		char sanitised[64] = {};
+		SanitiseSuffix(markSuffixBuf, sanitised, sizeof(sanitised), "sMarkSuffix");
+		strncpy_s(g_cfgMarkSuffix, sanitised, sizeof(g_cfgMarkSuffix) - 1);
 	}
 
-	// Build a human-readable form of toggleKey for the config log line.
-	char toggleStr[48];
-	if (g_cfgToggleKey == 0)
-	{
-		snprintf(toggleStr, sizeof(toggleStr), "0 (disabled)");
-	}
-	else
-	{
-		char keyName[32] = {};
-		UINT scanCode = MapVirtualKeyA(g_cfgToggleKey, MAPVK_VK_TO_VSC);
-		if (scanCode != 0)
-			GetKeyNameTextA(static_cast<LONG>(scanCode) << 16, keyName, sizeof(keyName));
-		snprintf(toggleStr, sizeof(toggleStr), "%u (%s)",
-			g_cfgToggleKey, keyName[0] ? keyName : "unknown");
-	}
+	auto loadKey = [iniPath](const char* name, UInt32& out) {
+		UInt32 v = static_cast<UInt32>(GetPrivateProfileIntA("Input", name, 0, iniPath));
+		if (v > 255)
+		{
+			_MESSAGE("UnreadNotes: WARNING — %s=%u out of keyboard range, disabling", name, v);
+			v = 0;
+		}
+		out = v;
+	};
+	loadKey("iToggleKey", g_cfgToggleKey);
+	loadKey("iMarkKey",   g_cfgMarkKey);
 
-	LOG(0, "UnreadNotes: Config — brightness=%d%% suffix=\"%s\" logLevel=%d toggleKey=%s",
-		static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgLogLevel, toggleStr);
+	char toggleStr[48], markStr[48];
+	FormatKeyForLog(g_cfgToggleKey, toggleStr, sizeof(toggleStr));
+	FormatKeyForLog(g_cfgMarkKey,   markStr,   sizeof(markStr));
+
+	LOG(0, "UnreadNotes: Config — brightness=%d%% suffix=\"%s\" markSuffix=\"%s\" logLevel=%d toggleKey=%s markKey=%s",
+		static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgMarkSuffix, g_cfgLogLevel,
+		toggleStr, markStr);
 
 	// Debug commands — triggered via INI, auto-reset after use
 	if (GetPrivateProfileIntA("Debug", "bResetAll", 0, iniPath) != 0)
@@ -229,31 +267,63 @@ static void LoadConfig()
 // Serialization (Cosave Persistence)
 // ============================================================================
 // FourCC tags written into the cosave. Hex values match MSVC's packing of
-// 'UNrd' and 'RdNt' — do not change without migrating existing save data.
-static constexpr UInt32 kPluginUID         = 0x554E7264;  // 'UNrd'
-static constexpr UInt32 kRecordType_ReadNotes = 0x52644E74;  // 'RdNt'
-static constexpr UInt32 kDataVersion       = 1;
+// 'UNrd', 'RdNt', 'MkNt' — do not change without migrating existing save data.
+static constexpr UInt32 kPluginUID               = 0x554E7264;  // 'UNrd'
+static constexpr UInt32 kRecordType_ReadNotes    = 0x52644E74;  // 'RdNt'
+static constexpr UInt32 kRecordType_MarkedNotes  = 0x4D6B4E74;  // 'MkNt'
+static constexpr UInt32 kDataVersion             = 1;
+
+static void WriteFormIDSet(const F4SESerializationInterface* intfc,
+	UInt32 recordType, const std::set<UInt32>& set)
+{
+	if (!intfc->OpenRecord(recordType, kDataVersion))
+		return;
+	auto count = static_cast<UInt32>(set.size());
+	intfc->WriteRecordData(&count, sizeof(count));
+	for (UInt32 formID : set)
+		intfc->WriteRecordData(&formID, sizeof(formID));
+}
+
+static void ReadFormIDSet(const F4SESerializationInterface* intfc,
+	std::set<UInt32>& out, const char* label)
+{
+	UInt32 count = 0;
+	intfc->ReadRecordData(&count, sizeof(count));
+	UInt32 loaded = 0;
+	for (UInt32 i = 0; i < count; i++)
+	{
+		UInt32 savedFormID = 0, resolvedFormID = 0;
+		intfc->ReadRecordData(&savedFormID, sizeof(savedFormID));
+		if (intfc->ResolveFormId(savedFormID, &resolvedFormID))
+		{
+			out.insert(resolvedFormID);
+			loaded++;
+		}
+		else
+		{
+			LOG(1, "UnreadNotes: %s FormID %08X could not be resolved, skipping",
+				label, savedFormID);
+		}
+	}
+	LOG(0, "UnreadNotes: Load — %u of %u %s entries resolved", loaded, count, label);
+}
 
 void Serialization_Revert(const F4SESerializationInterface* intfc)
 {
-	LOG(1, "UnreadNotes: Revert — clearing %u read notes", static_cast<UInt32>(g_readNotes.size()));
+	LOG(1, "UnreadNotes: Revert — clearing %u read + %u marked",
+		static_cast<UInt32>(g_readNotes.size()),
+		static_cast<UInt32>(g_markedNotes.size()));
 	g_readNotes.clear();
+	g_markedNotes.clear();
 }
 
 void Serialization_Save(const F4SESerializationInterface* intfc)
 {
-	LOG(1, "UnreadNotes: Save — writing %u read notes", static_cast<UInt32>(g_readNotes.size()));
-
-	if (intfc->OpenRecord(kRecordType_ReadNotes, kDataVersion))
-	{
-		auto count = static_cast<UInt32>(static_cast<UInt32>(g_readNotes.size()));
-		intfc->WriteRecordData(&count, sizeof(count));
-
-		for (UInt32 formID : g_readNotes)
-		{
-			intfc->WriteRecordData(&formID, sizeof(formID));
-		}
-	}
+	LOG(1, "UnreadNotes: Save — writing %u read + %u marked",
+		static_cast<UInt32>(g_readNotes.size()),
+		static_cast<UInt32>(g_markedNotes.size()));
+	WriteFormIDSet(intfc, kRecordType_ReadNotes,   g_readNotes);
+	WriteFormIDSet(intfc, kRecordType_MarkedNotes, g_markedNotes);
 }
 
 void Serialization_Load(const F4SESerializationInterface* intfc)
@@ -262,39 +332,15 @@ void Serialization_Load(const F4SESerializationInterface* intfc)
 
 	while (intfc->GetNextRecordInfo(&type, &version, &length))
 	{
-		if (type == kRecordType_ReadNotes)
+		if (version != kDataVersion)
 		{
-			if (version == kDataVersion)
-			{
-				UInt32 count = 0;
-				intfc->ReadRecordData(&count, sizeof(count));
-
-				UInt32 loaded = 0;
-				for (UInt32 i = 0; i < count; i++)
-				{
-					UInt32 savedFormID = 0;
-					intfc->ReadRecordData(&savedFormID, sizeof(savedFormID));
-
-					UInt32 resolvedFormID = 0;
-					if (intfc->ResolveFormId(savedFormID, &resolvedFormID))
-					{
-						g_readNotes.insert(resolvedFormID);
-						loaded++;
-					}
-					else
-					{
-						LOG(1, "UnreadNotes: FormID %08X could not be resolved, skipping",
-							savedFormID);
-					}
-				}
-
-				LOG(0, "UnreadNotes: Load — %u of %u entries resolved", loaded, count);
-			}
-			else
-			{
-				_WARNING("UnreadNotes: unknown data version %u, skipping", version);
-			}
+			_WARNING("UnreadNotes: unknown data version %u for record, skipping", version);
+			continue;
 		}
+		if (type == kRecordType_ReadNotes)
+			ReadFormIDSet(intfc, g_readNotes, "read");
+		else if (type == kRecordType_MarkedNotes)
+			ReadFormIDSet(intfc, g_markedNotes, "marked");
 	}
 }
 
@@ -431,16 +477,25 @@ static bool GetSelectedReadableItem(const GFxMovieRoot* movieRoot, ReadableItemI
 // ============================================================================
 // Entry List Data Modification
 // ============================================================================
-// Appends the read-suffix to entryList data entries whose FormID is in
-// g_readNotes. Called from the AdvanceMovie hook (inside the render cycle).
+// Appends the correct suffix (read or mark) to entryList entries based on
+// their state. Called from the AdvanceMovie hook (inside the render cycle).
+// Marked state takes visual priority if somehow both sets contain the item.
 
-// Fast path: returns true if any read item in entryList still lacks the suffix.
-// Called every frame from AdvanceMovie; lets us skip the full modification walk
-// once FallUI has already applied our suffixes in the current list view.
+// Returns the suffix that an item should display for its current state,
+// or an empty string if no suffix applies. Does not allocate.
+static const char* ExpectedSuffixForFormID(UInt32 formID)
+{
+	if (g_markedNotes.count(formID) > 0) return g_cfgMarkSuffix;
+	if (g_readNotes.count(formID)   > 0) return g_cfgSuffix;
+	return "";
+}
+
+// Fast path: returns true if any item's text doesn't match its state.
+// Runs every frame but only does simple string compares.
 static bool QuickCheckEntriesNeedModification(GFxValue& entryList, UInt32 entryCount)
 {
-	if (!g_cfgSuffix[0])
-		return false;  // No suffix configured — nothing to apply or re-check
+	if (!g_cfgSuffix[0] && !g_cfgMarkSuffix[0])
+		return false;  // No suffixes configured — nothing to apply
 
 	for (UInt32 idx = 0; idx < entryCount; idx++)
 	{
@@ -457,16 +512,21 @@ static bool QuickCheckEntriesNeedModification(GFxValue& entryList, UInt32 entryC
 		GFxValue fiv;
 		if (!de.HasMember("formID") || !de.GetMember("formID", &fiv))
 			continue;
-		if (g_readNotes.count(fiv.GetUInt()) == 0)
-			continue;
+
+		const char* expected = ExpectedSuffixForFormID(fiv.GetUInt());
+		if (!expected[0])
+			continue;  // Item has no state requiring a suffix
 
 		GFxValue tv;
 		if (!de.HasMember("text") || !de.GetMember("text", &tv) ||
 			tv.GetType() != GFxValue::kType_String)
 			continue;
 
-		if (!strstr(tv.GetString(), g_cfgSuffix))
-			return true;
+		const char* t = tv.GetString();
+		size_t tLen = strlen(t);
+		size_t sLen = strlen(expected);
+		if (tLen < sLen || strcmp(t + tLen - sLen, expected) != 0)
+			return true;  // Expected suffix missing
 	}
 	return false;
 }
@@ -501,8 +561,9 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 		if (g_markAllReadPending && formID != 0)
 			g_readNotes.insert(formID);
 
-		if (g_readNotes.count(formID) == 0)
-			continue;
+		const char* suffix = ExpectedSuffixForFormID(formID);
+		if (!suffix[0])
+			continue;  // No state — nothing to apply
 
 		GFxValue textVal;
 		if (!dataEntry.HasMember("text") ||
@@ -511,18 +572,15 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 			continue;
 
 		const char* text = textVal.GetString();
+		size_t tLen = strlen(text);
+		size_t sLen = strlen(suffix);
 
-		// Skip if already modified
-		if (g_cfgSuffix[0] && strstr(text, g_cfgSuffix))
+		// Skip if the correct suffix is already in place
+		if (tLen >= sLen && strcmp(text + tLen - sLen, suffix) == 0)
 			continue;
 
-		// Build modified text — suffix only. Alpha dimming is handled
-		// separately by the renderer alpha code in the AdvanceMovie hook.
-		if (!g_cfgSuffix[0])
-			continue;  // No suffix configured, nothing to modify
-
 		char buf[512];
-		snprintf(buf, sizeof(buf), "%s%s", text, g_cfgSuffix);
+		snprintf(buf, sizeof(buf), "%s%s", text, suffix);
 
 		GFxValue newTextVal;
 		movieRoot->CreateString(&newTextVal, buf);
@@ -541,14 +599,47 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 }
 
 
+// Strip known read or mark suffix from the entry's text if present.
+// Called after a state transition so the list refresh shows a clean name
+// before ModifyEntryListData re-applies whichever suffix the new state needs.
+static void StripKnownSuffixesFromEntry(GFxMovieRoot* movieRoot, GFxValue& entry,
+	const char* itemLabel)
+{
+	GFxValue textVal;
+	if (!entry.HasMember("text") || !entry.GetMember("text", &textVal) ||
+		textVal.GetType() != GFxValue::kType_String)
+		return;
+
+	const char* t = textVal.GetString();
+	size_t tLen = strlen(t);
+
+	const char* candidates[2] = { g_cfgSuffix, g_cfgMarkSuffix };
+	for (const char* s : candidates)
+	{
+		size_t sLen = strlen(s);
+		if (sLen == 0 || tLen < sLen) continue;
+		if (strcmp(t + tLen - sLen, s) != 0) continue;
+
+		char buf[512];
+		snprintf(buf, sizeof(buf), "%.*s", static_cast<int>(tLen - sLen), t);
+		GFxValue clean;
+		movieRoot->CreateString(&clean, buf);
+		entry.SetMember("text", &clean);
+		LOG(2, "UnreadNotes: Stripped \"%s\" from \"%s\"", s, itemLabel);
+		return;
+	}
+}
+
+
 // ============================================================================
-// Input Handler — read/unread toggle on configured keypress
+// Input Handler — toggle read/unread and mark/unmark
 // ============================================================================
-// Registered with MenuControls::inputEvents. Fires for any keyboard button
-// event while in a menu context; we filter to the configured scan code, then
-// gate on Pip-Boy being open, then toggle g_readNotes membership for the
-// currently selected readable item. Refreshes the list via InvalidateData so
-// the suffix appears/disappears immediately.
+// Registered with MenuControls::inputEvents. Handles two configurable keys:
+//   iToggleKey — cycles read/unread. Clears marked state (mutual exclusion).
+//   iMarkKey   — cycles marked/unmarked. Clears read state.
+// An item is always in exactly one of three states: unread, read, or marked.
+// After any transition we strip whatever suffix was present and kick an
+// InvalidateData so the display catches up immediately.
 class UnreadNotesInputHandler : public BSInputEventUser
 {
 public:
@@ -559,78 +650,81 @@ public:
 	{
 		if (!inputEvent)
 			return;
-
-		if (g_cfgToggleKey == 0)
-			return;
-
 		if (inputEvent->deviceType != InputEvent::kDeviceType_Keyboard)
 			return;
 
-		if (inputEvent->keyMask != g_cfgToggleKey)
+		UInt32 key = inputEvent->keyMask;
+		bool isToggle = (g_cfgToggleKey != 0 && key == g_cfgToggleKey);
+		bool isMark   = (g_cfgMarkKey   != 0 && key == g_cfgMarkKey);
+		if (!isToggle && !isMark)
 			return;
 
 		// Initial press only — ignore hold-repeat and release.
-		// isDown==1.0 && timer==0.0 is the false→true transition.
 		if (inputEvent->isDown != 1.0f || inputEvent->timer != 0.0f)
 			return;
 
 		GFxMovieRoot* movieRoot = GetPipboyMovieRoot();
 		if (!movieRoot)
 		{
-			LOG(2, "UnreadNotes: Toggle key pressed but Pip-Boy not open");
+			LOG(2, "UnreadNotes: Key pressed but Pip-Boy not open");
 			return;
 		}
 
 		ReadableItemInfo info;
 		if (!GetSelectedReadableItem(movieRoot, info, kFilterMask_MarkableItems))
 		{
-			LOG(2, "UnreadNotes: Toggle key pressed but no markable item selected");
+			LOG(2, "UnreadNotes: Key pressed but no markable item selected");
 			return;
 		}
 
-		bool wasRead = (g_readNotes.erase(info.formID) > 0);
-		if (!wasRead)
-			g_readNotes.insert(info.formID);
-
-		LOG(1, "UnreadNotes: Toggled %s %s \"%s\" (FormID %08X) (total: %u)",
-			wasRead ? "UNREAD" : "READ",
-			GetItemTypeLabel(info), info.name, info.formID,
-			static_cast<UInt32>(g_readNotes.size()));
-
-		// When flipping to unread, strip our suffix from the entry's text so
-		// the list refresh below shows the clean name. Our ModifyEntryListData
-		// only APPENDS the suffix — it doesn't remove it — so without this the
-		// "(Read)" text lingers until the Pip-Boy fully reopens.
-		if (wasRead && g_cfgSuffix[0])
+		const char* direction = "?";
+		if (isToggle)
 		{
-			GFxValue selectedEntry;
-			if (movieRoot->GetVariable(&selectedEntry,
-					"root.Menu_mc.CurrentPage.List_mc.selectedEntry") &&
-				selectedEntry.IsObject())
+			// Toggle always clears marked, then flips read.
+			g_markedNotes.erase(info.formID);
+			bool wasRead = (g_readNotes.erase(info.formID) > 0);
+			if (!wasRead)
 			{
-				GFxValue textVal;
-				if (selectedEntry.HasMember("text") &&
-					selectedEntry.GetMember("text", &textVal) &&
-					textVal.GetType() == GFxValue::kType_String)
-				{
-					const char* t = textVal.GetString();
-					size_t tLen = strlen(t);
-					size_t sLen = strlen(g_cfgSuffix);
-					if (tLen >= sLen && strcmp(t + tLen - sLen, g_cfgSuffix) == 0)
-					{
-						char buf[512];
-						snprintf(buf, sizeof(buf), "%.*s",
-							static_cast<int>(tLen - sLen), t);
-						GFxValue clean;
-						movieRoot->CreateString(&clean, buf);
-						selectedEntry.SetMember("text", &clean);
-						LOG(2, "UnreadNotes: Stripped suffix from \"%s\"", info.name);
-					}
-				}
+				g_readNotes.insert(info.formID);
+				direction = "READ";
+			}
+			else
+			{
+				direction = "UNREAD";
+			}
+		}
+		else  // isMark
+		{
+			// Mark always clears read, then flips marked.
+			g_readNotes.erase(info.formID);
+			bool wasMarked = (g_markedNotes.erase(info.formID) > 0);
+			if (!wasMarked)
+			{
+				g_markedNotes.insert(info.formID);
+				direction = "MARKED";
+			}
+			else
+			{
+				direction = "UNMARKED";
 			}
 		}
 
-		// Force the list to refresh so suffix appears/disappears immediately.
+		LOG(1, "UnreadNotes: Toggled %s %s \"%s\" (FormID %08X) (read=%u marked=%u)",
+			direction, GetItemTypeLabel(info), info.name, info.formID,
+			static_cast<UInt32>(g_readNotes.size()),
+			static_cast<UInt32>(g_markedNotes.size()));
+
+		// Strip whichever suffix was present; ModifyEntryListData on the next
+		// frame will re-apply the correct one for the new state (if any).
+		GFxValue selectedEntry;
+		if (movieRoot->GetVariable(&selectedEntry,
+				"root.Menu_mc.CurrentPage.List_mc.selectedEntry") &&
+			selectedEntry.IsObject())
+		{
+			StripKnownSuffixesFromEntry(movieRoot, selectedEntry, info.name);
+		}
+
+		// Refresh the list so suffix changes are visible immediately.
 		// Alpha dimming updates naturally via AdvanceMovie on the next frame.
 		GFxValue listMc;
 		if (movieRoot->GetVariable(&listMc, "root.Menu_mc.CurrentPage.List_mc") &&
@@ -669,7 +763,12 @@ public:
 					ReadableItemInfo info;
 					if (GetSelectedReadableItem(movieRoot, info))
 					{
-						if ([[maybe_unused]] bool isNew = g_readNotes.insert(info.formID).second)
+						if (g_markedNotes.count(info.formID) > 0)
+						{
+							LOG(2, "UnreadNotes: Auto-mark skipped for %s \"%s\" (FormID %08X) — item is marked",
+								GetItemTypeLabel(info), info.name, info.formID);
+						}
+						else if ([[maybe_unused]] bool isNew = g_readNotes.insert(info.formID).second)
 						{
 							LOG(1, "UnreadNotes: Marked %s \"%s\" (FormID %08X) as read via %s (total: %u)",
 								GetItemTypeLabel(info), info.name, info.formID, name,
@@ -784,7 +883,12 @@ static void DetectHolotapePlayback(const GFxMovieRoot * movieRoot)
 	// still generates a detectable edge.
 	if (currentPlaying && !s_prevPlaying && haveSelection)
 	{
-		if (g_readNotes.insert(info.formID).second)
+		if (g_markedNotes.count(info.formID) > 0)
+		{
+			LOG(2, "UnreadNotes: Auto-mark skipped for %s \"%s\" (FormID %08X) — item is marked",
+				GetItemTypeLabel(info), info.name, info.formID);
+		}
+		else if (g_readNotes.insert(info.formID).second)
 		{
 			LOG(1, "UnreadNotes: Marked %s \"%s\" (FormID %08X) as read via HolotapePlaying (total: %u)",
 				GetItemTypeLabel(info), info.name, info.formID,
@@ -895,7 +999,10 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 		entryList.GetElement(itemIndex, &dataEntry);
 		if (!dataEntry.IsObject()) continue;
 
-		// Determine target alpha based on read status
+		// Determine target alpha based on state.
+		//   Marked → full alpha (bright, attention-grabbing).
+		//   Read   → configured brightness (dimmed).
+		//   Unread → full alpha.
 		double targetAlpha = 1.0;
 
 		GFxValue filterFlagVal;
@@ -909,7 +1016,10 @@ void AdvanceMovie_Hook(GameMenuBase* menu, float unk0, void* unk1)
 				if (dataEntry.HasMember("formID") &&
 					dataEntry.GetMember("formID", &formIDVal))
 				{
-					if (g_readNotes.count(formIDVal.GetUInt()) > 0)
+					UInt32 fid = formIDVal.GetUInt();
+					if (g_markedNotes.count(fid) > 0)
+						targetAlpha = 1.0;
+					else if (g_readNotes.count(fid) > 0)
 						targetAlpha = static_cast<double>(g_cfgBrightness);
 				}
 			}
