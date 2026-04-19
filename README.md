@@ -7,6 +7,7 @@ An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read t
 - **Read items dimmed** — configurable opacity applied to the entire row (text, item counts, icons)
 - **"(Read)" suffix** on read item names (configurable)
 - **Toggle key** — configurable keypress to mark any readable Pip-Boy item as read or unread (notes, holotapes, magazines, game cartridges, misc items)
+- **Mark key** — separate keypress to flag an item as "marked": stays bright, gets a distinct suffix, and is skipped by auto-mark-as-read. Handy for config holotapes (SKK etc.) and radiant notes with shared FormIDs.
 - **Tracks notes, text holotapes, and audio holotapes**
 - **Magazines included** — read through the Pip-Boy, they're suffixed and dimmed like notes
 - **Works with all FallUI colour schemes** — alpha-based dimming, not colour replacement
@@ -23,6 +24,18 @@ The plugin tracks notes and holotapes read through the Pip-Boy inventory. Detect
 - **Audio holotapes** — caught by polling the `HolotapePlaying` flag on the Pip-Boy's Flash data object and edge-detecting the `false→true` transition. The currently-selected item at that moment is the one being played. This works even for tapes that play in the background without opening any other menu.
 
 An AdvanceMovie hook runs inside the game's per-frame menu update to modify the inventory list data and apply alpha dimming to renderers — ensuring changes display immediately and persist across tab switches.
+
+## Item states
+
+Each tracked item is always in exactly one of three states:
+
+| State | Visual | Set by |
+|-------|--------|--------|
+| Unread | Full brightness, no suffix | Default |
+| Read | Dimmed, `" (Read)"` suffix | Auto (BookMenu / TerminalMenu / HolotapePlaying) or toggle key |
+| Marked | Full brightness, `" (*)"` suffix | Mark key only. Auto-mark is skipped for marked items. |
+
+The toggle key and mark key are mutually exclusive: marking a read item clears the read state, and toggling a marked item clears the marked state.
 
 ## Requirements
 
@@ -52,6 +65,9 @@ iReadBrightness=50
 ; Text appended to read item names. ASCII only, no < > characters.
 sSuffix=" (Read)"
 
+; Text appended to MARKED item names (bright, excluded from auto-mark-as-read).
+sMarkSuffix=" (*)"
+
 ; Logging level. 0 = minimal, 1 = normal, 2 = debug (includes per-frame perf stats).
 iLogLevel=1
 
@@ -63,6 +79,10 @@ iLogLevel=1
 ; Reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes
 ; Suggested unused keys: 189 ("-"), 187 ("="), 220 ("\")
 ;iToggleKey=189
+
+; Mark/unmark the selected item. Marked items stay bright, get sMarkSuffix,
+; and are skipped by auto-mark-as-read. Pick a different key from iToggleKey.
+;iMarkKey=187
 
 [Debug]
 ; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.

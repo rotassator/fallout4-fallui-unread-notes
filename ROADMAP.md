@@ -31,8 +31,7 @@
 
 ### From v1.0 user feedback (Nexus)
 - [x] ~~**Read/unread toggle on keypress**~~ — DONE. Configurable scan code under `[Input]`, commented out by default. FallUI's menu dispatch uses Windows VK codes; values match UESP's table directly (no DIK conversion needed). Widened the visual/markable filter to include misc items (0x200) so anything toggled gets the suffix and dim.
-- [ ] **Per-FormID ignore list** — some radiant/procedural notes share FormIDs ("random radiant bounty", "treasure note"), so marking one marks them all. Need an ignore list (probably cosave, since radiant contents are per-save) plus a distinct suffix (e.g. `(-)`).
-- [ ] **Bookmark/highlight tag** — mark an item for later reference, distinct from read state. Likely shares the keypress infrastructure from #1, with a different suffix (e.g. `(*)`).
+- [x] ~~**Per-FormID ignore list** + **Bookmark/highlight tag**~~ — DONE, merged into a single "mark" feature. Configurable `iMarkKey` flips items between unmarked and marked; marked items stay bright, get `sMarkSuffix` (default `" (*)"`), are excluded from auto-mark-as-read. Mutually exclusive with the read state (marking a read item clears read, toggling a marked item clears mark). Persisted in a new `MkNt` cosave record alongside `RdNt`. Covers both the radiant-FormID-collision use case and the bookmark-for-later use case with one mechanism.
 
 - [x] ~~Configurable logging levels~~ — DONE. iLogLevel=0-2. Perf stats gated behind level 2.
 - [x] ~~Audio holotape detection~~ — DONE. Polls `root.Menu_mc.DataObj.HolotapePlaying` in AdvanceMovie_Hook and edge-detects the false→true transition. The tape-loading animation briefly drops the flag between plays, so seamless swaps (new tape without explicit stop) produce detectable cycles. First-sample suppression prevents spurious marks when reopening the Pipboy mid-playback.
