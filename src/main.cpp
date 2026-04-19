@@ -238,6 +238,23 @@ static void LoadConfig()
 	loadKey("iToggleKey", g_cfgToggleKey);
 	loadKey("iMarkKey",   g_cfgMarkKey);
 
+	// Reject misconfiguration: both keys set to the same value means the mark
+	// branch in OnButtonEvent is unreachable.
+	if (g_cfgToggleKey != 0 && g_cfgToggleKey == g_cfgMarkKey)
+	{
+		_MESSAGE("UnreadNotes: WARNING — iToggleKey and iMarkKey are both %u; disabling iMarkKey",
+			g_cfgMarkKey);
+		g_cfgMarkKey = 0;
+	}
+
+	// Reject visually ambiguous state: identical non-empty suffixes mean read
+	// and marked items look the same.
+	if (g_cfgSuffix[0] && g_cfgMarkSuffix[0] && strcmp(g_cfgSuffix, g_cfgMarkSuffix) == 0)
+	{
+		_MESSAGE("UnreadNotes: WARNING — sSuffix and sMarkSuffix are identical (\"%s\"); "
+			"read and marked items will be visually indistinguishable", g_cfgSuffix);
+	}
+
 	char toggleStr[48], markStr[48];
 	FormatKeyForLog(g_cfgToggleKey, toggleStr, sizeof(toggleStr));
 	FormatKeyForLog(g_cfgMarkKey,   markStr,   sizeof(markStr));
@@ -285,10 +302,23 @@ static void WriteFormIDSet(const F4SESerializationInterface* intfc,
 }
 
 static void ReadFormIDSet(const F4SESerializationInterface* intfc,
-	std::set<UInt32>& out, const char* label)
+	std::set<UInt32>& out, const char* label, UInt32 recordLength, UInt32 version)
 {
 	UInt32 count = 0;
 	intfc->ReadRecordData(&count, sizeof(count));
+
+	// Bounds-check count against the record length supplied by GetNextRecordInfo.
+	// A corrupt or hand-edited cosave could otherwise request billions of reads.
+	UInt32 maxCount = (recordLength > sizeof(UInt32))
+		? (recordLength - sizeof(UInt32)) / sizeof(UInt32)
+		: 0;
+	if (count > maxCount)
+	{
+		_MESSAGE("UnreadNotes: WARNING — %s record claims %u entries but only %u fit in %u bytes; clamping",
+			label, count, maxCount, recordLength);
+		count = maxCount;
+	}
+
 	UInt32 loaded = 0;
 	for (UInt32 i = 0; i < count; i++)
 	{
@@ -305,7 +335,8 @@ static void ReadFormIDSet(const F4SESerializationInterface* intfc,
 				label, savedFormID);
 		}
 	}
-	LOG(0, "UnreadNotes: Load — %u of %u %s entries resolved", loaded, count, label);
+	LOG(0, "UnreadNotes: Load — %u of %u %s entries resolved (record v%u)",
+		loaded, count, label, version);
 }
 
 void Serialization_Revert(const F4SESerializationInterface* intfc)
@@ -332,16 +363,33 @@ void Serialization_Load(const F4SESerializationInterface* intfc)
 
 	while (intfc->GetNextRecordInfo(&type, &version, &length))
 	{
-		if (version != kDataVersion)
-		{
-			_WARNING("UnreadNotes: unknown data version %u for record, skipping", version);
-			continue;
-		}
 		if (type == kRecordType_ReadNotes)
-			ReadFormIDSet(intfc, g_readNotes, "read");
+		{
+			if (version == kDataVersion)
+				ReadFormIDSet(intfc, g_readNotes, "read", length, version);
+			else
+				_MESSAGE("UnreadNotes: WARNING — ReadNotes v%u unknown, skipping", version);
+		}
 		else if (type == kRecordType_MarkedNotes)
-			ReadFormIDSet(intfc, g_markedNotes, "marked");
+		{
+			if (version == kDataVersion)
+				ReadFormIDSet(intfc, g_markedNotes, "marked", length, version);
+			else
+				_MESSAGE("UnreadNotes: WARNING — MarkedNotes v%u unknown, skipping", version);
+		}
+		// Unknown record types fall through silently — preserves forward-compat
+		// if a future version adds new records that this loader doesn't recognise.
 	}
+
+	// Enforce mutual-exclusion invariant. A corrupt or hand-edited cosave could
+	// list the same FormID in both sets; marked takes priority in the UI, so
+	// prefer that state for consistency.
+	UInt32 pruned = 0;
+	for (UInt32 id : g_markedNotes)
+		pruned += static_cast<UInt32>(g_readNotes.erase(id));
+	if (pruned > 0)
+		_MESSAGE("UnreadNotes: WARNING — %u FormID(s) in both read and marked sets; "
+			"removed from read (marked takes priority)", pruned);
 }
 
 
