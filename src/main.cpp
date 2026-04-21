@@ -605,8 +605,12 @@ static int ModifyEntryListData(GFxMovieRoot* movieRoot, GFxValue& entryList, UIn
 
 		UInt32 formID = formIDVal.GetUInt();
 
-		// Debug: mark all readable items as read
-		if (g_markAllReadPending && formID != 0)
+		// Debug: mark all readable items as read. Narrower than the outer
+		// MarkableItems mask — the misc bit (0x200) covers the entire MISC
+		// tab (bobbleheads, quest items, etc.), not just readable schematics,
+		// so mass-marking it is wrong. Manual per-item keypress is the only
+		// supported way to mark misc items.
+		if (g_markAllReadPending && formID != 0 && (filterFlag & kFilterMask_ReadableItems))
 			g_readNotes.insert(formID);
 
 		const char* suffix = ExpectedSuffixForFormID(formID);
@@ -1170,7 +1174,7 @@ __declspec(dllexport) bool F4SEPlugin_Query(const F4SEInterface* f4se, PluginInf
 
 __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 {
-	_MESSAGE("UnreadNotes v1.2.0: loading");
+	_MESSAGE("UnreadNotes v" PLUGIN_VERSION_STRING ": loading");
 
 	LoadConfig();
 
@@ -1220,7 +1224,7 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 		InstallAdvanceMovieHook();
 	}
 
-	_MESSAGE("UnreadNotes v1.2.0: loaded successfully");
+	_MESSAGE("UnreadNotes v" PLUGIN_VERSION_STRING ": loaded successfully");
 
 	return true;
 }
