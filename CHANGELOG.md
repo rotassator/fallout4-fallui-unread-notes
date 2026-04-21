@@ -2,6 +2,17 @@
 
 All notable changes to UnreadNotes will be documented in this file.
 
+## [1.2.1] — Debug-flag scope fix
+
+- `bMarkAllRead` now only marks notes and holotapes, not the entire MISC tab.
+  Previously it would sweep in bobbleheads, quest items, and anything else
+  sharing the misc filter bit — because the handler piggy-backed on the
+  wider MarkableItems mask meant for manual keypress toggles.
+- Version info is now embedded in the DLL: right-click `UnreadNotes.dll`,
+  Properties, Details tab shows File version / Product version. Sourced
+  from the CMake `project(VERSION ...)` so all on-disk and in-log
+  versions stay in lockstep.
+
 ## [1.2.0] — Mark for later / excluded items
 
 - Configurable second keypress (`iMarkKey` under `[Input]`) flags the selected

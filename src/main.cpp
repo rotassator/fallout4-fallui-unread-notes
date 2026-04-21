@@ -1174,7 +1174,7 @@ __declspec(dllexport) bool F4SEPlugin_Query(const F4SEInterface* f4se, PluginInf
 
 __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 {
-	_MESSAGE("UnreadNotes v1.2.0: loading");
+	_MESSAGE("UnreadNotes v" PLUGIN_VERSION_STRING ": loading");
 
 	LoadConfig();
 
@@ -1224,7 +1224,7 @@ __declspec(dllexport) bool F4SEPlugin_Load(const F4SEInterface* f4se)
 		InstallAdvanceMovieHook();
 	}
 
-	_MESSAGE("UnreadNotes v1.2.0: loaded successfully");
+	_MESSAGE("UnreadNotes v" PLUGIN_VERSION_STRING ": loaded successfully");
 
 	return true;
 }
