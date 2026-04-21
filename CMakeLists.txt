@@ -8,7 +8,17 @@
 # what I need to link against, now go make me a DLL."
 
 cmake_minimum_required(VERSION 3.20)
-project(UnreadNotes VERSION 1.0.0 LANGUAGES CXX)
+project(UnreadNotes VERSION 1.2.1 LANGUAGES CXX RC)
+
+# Generate a Windows version resource (.rc) from src/version.rc.in, substituting
+# @PROJECT_VERSION@ etc. The compiled resource embeds FILEVERSION / PRODUCTVERSION
+# into the DLL so right-click > Properties > Details shows the version. One
+# source of truth: bump project(VERSION ...) above and everything flows from it.
+configure_file(
+    "${CMAKE_SOURCE_DIR}/src/version.rc.in"
+    "${CMAKE_BINARY_DIR}/version.rc"
+    @ONLY
+)
 
 # Force static release CRT (/MT) in all configs — including Debug.
 # The prebuilt common_vc11.lib and f4se_common.lib were built with /MT,
@@ -55,6 +65,7 @@ set(F4SE_SOURCES
 
 add_library(${PROJECT_NAME} SHARED
 	src/main.cpp
+	"${CMAKE_BINARY_DIR}/version.rc"
 	${F4SE_SOURCES}
 )
 
@@ -98,6 +109,9 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 	WIN32_LEAN_AND_MEAN
 	RUNTIME
 	RUNTIME_VERSION=0x010A0A30
+	# Exposes the CMake project version to the C++ code as a string literal,
+	# so log lines in main.cpp use the same version the .rc file embeds.
+	PLUGIN_VERSION_STRING="${PROJECT_VERSION}"
 )
 
 # Link against the pre-built F4SE libraries.
