@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/check-submodule-review.sh",
+            "if": "Bash(git *)",
+            "timeout": 30,
+            "statusMessage": "Checking submodule SHAs"
+          }
+        ]
+      }
+    ]
+  }
+}
