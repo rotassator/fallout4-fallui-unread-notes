@@ -8,6 +8,9 @@ cmake-build-*/
 # Local build helper for running cmake from a non-VS-dev shell
 build.bat
 
+# Python cache from tools/
+__pycache__/
+
 # SWF working files — decompiled sources, P-code exports, backups, patches
 swf_dump/
 pcode_export/
