@@ -38,6 +38,25 @@ local TEST_TARGETS = {
 -- F4SEInterface structs are ABI-compatible up through GetPluginInfo, so the
 -- shared F4SEPlugin_Load (defined via F4SE_PLUGIN_LOAD in main.cpp) works
 -- against both. Placeholders use the rule's ${...} substitution.
+--
+-- Compat declaration strategy:
+--   UsesAddressLibrary(true)      — claims AE-era Address Library independence
+--                                   (bit for 1.11.137+). F4SE 0.7.5+ on AE sees
+--                                   this bit and skips the compatibleVersions
+--                                   whitelist check, so a single build covers
+--                                   every AE point release (1.11.137 through
+--                                   1.11.191) as long as the user has the
+--                                   matching version-*.bin installed.
+--   CompatibleVersions({1.10.984}) — NG-era F4SE (0.7.2-0.7.4) uses a different
+--                                   kCurrentAddressLibrary bit (1.10.980), so
+--                                   our AE bit is invisible to it; F4SE falls
+--                                   through to this whitelist and matches NG.
+--   IsLayoutDependent(true)       — sets the 1.11.137+ structure-layout bit
+--                                   (confusingly named — this *claims* our code
+--                                   uses that layout, which satisfies AE-era
+--                                   F4SE's hasStructureIndependence check).
+-- OG is unaffected by any of the above: it uses the legacy Query path and
+-- never reads PluginVersionData.
 local PLUGIN_FILE_DATA = [[
 #include <F4SE/F4SE.h>
 
@@ -46,11 +65,11 @@ F4SE_EXPORT constinit auto F4SEPlugin_Version = []() noexcept {
     v.PluginVersion({ ${PLUGIN_VERSION_MAJOR}, ${PLUGIN_VERSION_MINOR}, ${PLUGIN_VERSION_PATCH}, 0 });
     v.PluginName("${PLUGIN_NAME}");
     v.AuthorName("${PLUGIN_AUTHOR}");
-    v.UsesAddressLibrary(false);
+    v.UsesAddressLibrary(true);
     v.UsesSigScanning(false);
     v.IsLayoutDependent(true);
     v.HasNoStructUse(false);
-    v.CompatibleVersions({ F4SE::RUNTIME_1_10_984, F4SE::RUNTIME_LATEST });
+    v.CompatibleVersions({ F4SE::RUNTIME_1_10_984 });
     return v;
 }();
 
