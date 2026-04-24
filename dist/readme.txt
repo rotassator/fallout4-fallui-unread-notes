@@ -7,8 +7,10 @@ you've already seen.
 
 Requirements
 ------------
-- Fallout 4 v1.10.163 (pre-next-gen)
-- F4SE v0.6.23+
+- Fallout 4 (OG 1.10.163, NG 1.10.984, or AE 1.11.x)
+- F4SE matching your runtime (v0.6.23+ for OG, v0.7.x for NG/AE)
+- Address Library for F4SE (https://www.nexusmods.com/fallout4/mods/47327)
+  — with the .bin file matching your specific game version
 - FallUI - Inventory (https://www.nexusmods.com/fallout4/mods/48758)
 
 Installation
