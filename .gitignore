@@ -29,6 +29,9 @@ addon/
 # Distribution archives (built manually, not tracked)
 *.zip
 
+# Nexus paste-source drafts (per-release ephemera kept locally for reference)
+nexus-*.txt
+
 # The DLL in dist/ is tracked — it's the distributable binary.
 # Rebuilding updates it automatically via CMake post-build step.
 # The INI in dist/ is a reference copy — actual INI is auto-created at runtime.
