@@ -1,5 +1,7 @@
 build/
 cmake-build-*/
+.xmake/
+vsxmake*/
 
 # IDE workspace metadata (per-user, not shared)
 .idea/
@@ -7,6 +9,12 @@ cmake-build-*/
 
 # Local build helper for running cmake from a non-VS-dev shell
 build.bat
+
+# Python cache from tools/
+__pycache__/
+
+# Per-machine state for the submodule security-review hook
+.claude/.submodule-review-state
 
 # SWF working files — decompiled sources, P-code exports, backups, patches
 swf_dump/
