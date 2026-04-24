@@ -10,9 +10,26 @@ set_warnings("allextra")
 add_rules("mode.debug", "mode.releasedbg")
 add_rules("plugin.vsxmake.autoupdate")
 
--- Local Vortex test mod folder. Best-effort copy — build still succeeds if absent
--- (e.g. on a clean clone). Replaces the post-build step from the old CMakeLists.
-local VORTEX_TEST_DIR = "C:/games/Vortex/fallout4/mods/custom-mod-1775213665065/F4SE/Plugins"
+-- CRITICAL: must match commonlibf4's build-time value. Without this our TU
+-- sees REL::ID sized for 1 runtime (the header default) while commonlibf4.lib
+-- sees it sized for 3 — ODR violation that makes every AE/NG lookup read
+-- garbage past the end of our array. OG works because slot 0 is the same in
+-- both sizes. Spent hours bisecting before spotting this.
+add_defines("COMMONLIB_RUNTIMECOUNT=3")
+
+-- Local test-deploy targets, one per mod manager. Each entry:
+--   label   — shown in the build log line
+--   root    — manager's own folder; used to gate the copy (skip if absent)
+--   plugins — final F4SE/Plugins/ path the DLL goes into; created if missing
+-- Build stays successful if any target's root is absent (fresh clone, etc).
+local TEST_TARGETS = {
+    { label = "Vortex",
+      root    = "C:/games/Vortex/fallout4/mods",
+      plugins = "C:/games/Vortex/fallout4/mods/custom-mod-1775213665065/F4SE/Plugins" },
+    { label = "MO2",
+      root    = "C:/games/MO2/mods",
+      plugins = "C:/games/MO2/mods/UnreadNotes/F4SE/Plugins" },
+}
 
 -- Dual-API plugin entry. CommonLibF4's default template only exports the
 -- modern F4SEPlugin_Version (NG/AE-era F4SE). OG runtime 1.10.163 ships
@@ -72,11 +89,14 @@ target("UnreadNotes")
         os.cp(dll, dist)
         cprint("${green}[deploy]${clear} %s", dist)
 
-        local test_dest = path.join(VORTEX_TEST_DIR, path.filename(dll))
-        if os.isdir(VORTEX_TEST_DIR) then
-            os.cp(dll, test_dest)
-            cprint("${green}[deploy]${clear} %s", test_dest)
-        else
-            cprint("${yellow}[deploy]${clear} skipped Vortex copy (folder not found): %s", VORTEX_TEST_DIR)
+        for _, t in ipairs(TEST_TARGETS) do
+            if os.isdir(t.root) then
+                os.mkdir(t.plugins)  -- idempotent; creates F4SE/Plugins on first build
+                local dest = path.join(t.plugins, path.filename(dll))
+                os.cp(dll, dest)
+                cprint("${green}[deploy]${clear} %s", dest)
+            else
+                cprint("${yellow}[deploy]${clear} skipped %s copy (root not found): %s", t.label, t.root)
+            end
         end
     end)
