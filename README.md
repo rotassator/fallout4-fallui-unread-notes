@@ -39,13 +39,18 @@ The toggle key and mark key are mutually exclusive: marking a read item clears t
 
 ## Requirements
 
+**Required:**
+
 - Fallout 4 — any of:
   - OG 1.10.163 (pre-next-gen)
   - NG 1.10.984 (next-gen)
   - AE 1.11.x (anniversary edition)
 - [F4SE](https://f4se.silverlock.org/) matching your runtime (v0.6.23+ for OG, v0.7.x for NG/AE)
 - [Address Library for F4SE](https://www.nexusmods.com/fallout4/mods/47327) — with the `.bin` file matching your specific game version
-- [FallUI - Inventory](https://www.nexusmods.com/fallout4/mods/48758)
+
+**Recommended:**
+
+- [FallUI - Inventory](https://www.nexusmods.com/fallout4/mods/48758) — needed for the dimming effect. Without FallUI, the `(Read)` suffix and toggle/mark keys still work, but read items aren't visually dimmed.
 
 ## Installation
 
