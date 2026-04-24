@@ -2,6 +2,27 @@
 
 All notable changes to UnreadNotes will be documented in this file.
 
+## [1.3.0] — NG/AE runtime support
+
+- Now works on NG (1.10.984) and AE (1.11.x) in addition to the existing
+  OG (1.10.163) runtime. Single DLL covers all three — the correct runtime
+  is detected at plugin load. Requires [Address Library for F4SE](https://www.nexusmods.com/fallout4/mods/47327)
+  and an F4SE build matching the user's runtime.
+- NG support is released without direct developer testing (no NG install
+  available on the author's machine); AE is confirmed working end-to-end.
+  If NG users hit issues, please report them on Nexus or the issue tracker.
+- Cosaves are byte-compatible with 1.2.1 — upgrading keeps your read and
+  marked sets intact. The `RdNt` / `MkNt` record format is unchanged.
+- Ported from vanilla F4SE to CommonLibF4 + Address Library under the hood.
+  Build system moved from CMake to XMake.
+- The Pip-Boy display hook is now a vtable swap on PipboyMenu's
+  AdvanceMovie slot, replacing the xbyak branch trampoline used in 1.2.1.
+  Behaviourally identical from the user's perspective; internally, only
+  PipboyMenu's AdvanceMovie is intercepted now, rather than every menu's
+  call running through a trampoline and being filtered.
+- New startup log line: `UnreadNotes: detected runtime X.Y.Z.B (OG|NG|AE)`
+  prints near the top of `f4se.log` — makes bug reports self-diagnosing.
+
 ## [1.2.1] — Debug-flag scope fix
 
 - `bMarkAllRead` now only marks notes and holotapes, not the entire MISC tab.

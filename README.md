@@ -39,8 +39,12 @@ The toggle key and mark key are mutually exclusive: marking a read item clears t
 
 ## Requirements
 
-- Fallout 4 v1.10.163 (GOG/pre-next-gen)
-- [F4SE](https://f4se.silverlock.org/) v0.6.23+
+- Fallout 4 — any of:
+  - OG 1.10.163 (pre-next-gen)
+  - NG 1.10.984 (next-gen)
+  - AE 1.11.x (anniversary edition)
+- [F4SE](https://f4se.silverlock.org/) matching your runtime (v0.6.23+ for OG, v0.7.x for NG/AE)
+- [Address Library for F4SE](https://www.nexusmods.com/fallout4/mods/47327) — with the `.bin` file matching your specific game version
 - [FallUI - Inventory](https://www.nexusmods.com/fallout4/mods/48758)
 
 ## Installation
@@ -113,19 +117,26 @@ Log file: `Documents\My Games\Fallout4\F4SE\UnreadNotes.log`
 ### Prerequisites
 
 - Visual Studio 2022 with "Desktop development with C++" workload
-- CMake 3.20+
-- F4SE v0.6.23 source code (with pre-built libs)
+- [xmake](https://xmake.io/) 2.8+
 
 ### Build
 
-The F4SE source path is configured in `CMakeLists.txt`.
+Clone with submodules, configure, and build:
 
 ```bash
-cmake -B build -S . -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release
+git clone --recurse-submodules https://github.com/rotassator/fallout4-fallui-unread-notes
+cd fallout4-fallui-unread-notes
+xmake f -p windows -a x64 -m releasedbg
+xmake build
 ```
 
-The DLL is copied to `dist/F4SE/Plugins/` and the Vortex mod folder (if configured in CMakeLists.txt).
+Pass `-p windows` explicitly — without it, xmake may auto-detect MinGW from Git's bundled toolchain and the build will fail at the spdlog install step.
+
+The DLL is built to `build/windows/x64/releasedbg/UnreadNotes.dll` and auto-deployed to `dist/F4SE/Plugins/`. Optional local deploy targets (Vortex, MO2) in `xmake.lua` trigger if those paths exist.
+
+### Submodule note
+
+`lib/commonlibf4` currently points at a fork branch (rotassator/commonlibf4) pending [upstream PR #6](https://github.com/Dear-Modding-FO4/commonlibf4/pull/6), which adds a missing OG Scaleform `Value::GetMember` ID. The submodule will be bumped back to upstream Dear-Modding-FO4/commonlibf4 once the PR merges.
 
 ## License
 
