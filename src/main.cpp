@@ -99,31 +99,24 @@ static void SanitiseSuffix(const char* rawBuf, char* out, std::size_t outSize, c
 // Fallout 4 with a virtualised or unexpected working directory.
 static const char* GetIniPath()
 {
-    static char s_iniPath[MAX_PATH] = {};
-    if (s_iniPath[0] != '\0')
-        return s_iniPath;
+    static std::string s_iniPath;
+    if (!s_iniPath.empty())
+        return s_iniPath.c_str();
 
     char  exePath[MAX_PATH];
     DWORD len = GetModuleFileNameA(nullptr, exePath, sizeof(exePath));
     if (len == 0 || len >= sizeof(exePath))
     {
         REX::WARN("UnreadNotes: WARNING — GetModuleFileName failed (len={}), using relative path", len);
-        strcpy_s(s_iniPath, R"(Data\F4SE\Plugins\UnreadNotes.ini)");
-        return s_iniPath;
+        s_iniPath = R"(Data\F4SE\Plugins\UnreadNotes.ini)";
+        return s_iniPath.c_str();
     }
 
-    for (DWORD i = len; i > 0; i--)
-    {
-        if (exePath[i - 1] == '\\' || exePath[i - 1] == '/')
-        {
-            exePath[i - 1] = '\0';
-            break;
-        }
-    }
-
-    std::snprintf(s_iniPath, sizeof(s_iniPath),
-        R"(%s\Data\F4SE\Plugins\UnreadNotes.ini)", exePath);
-    return s_iniPath;
+    std::filesystem::path p{ exePath };
+    p.remove_filename();
+    p /= "Data/F4SE/Plugins/UnreadNotes.ini";
+    s_iniPath = p.string();
+    return s_iniPath.c_str();
 }
 
 static void CreateDefaultConfig(const char* path)
@@ -285,12 +278,27 @@ static void LoadConfig()
 // ============================================================================
 // Serialization (Cosave Persistence)
 // ============================================================================
-// FourCC tags written into the cosave. Hex values match MSVC's packing of
-// 'UNrd', 'RdNt', 'MkNt' — do not change without migrating existing save data.
-static constexpr std::uint32_t kPluginUID               = 0x554E7264;  // 'UNrd'
-static constexpr std::uint32_t kRecordType_ReadNotes    = 0x52644E74;  // 'RdNt'
-static constexpr std::uint32_t kRecordType_MarkedNotes  = 0x4D6B4E74;  // 'MkNt'
-static constexpr std::uint32_t kDataVersion             = 1;
+// FourCC tags written into the cosave. Do not change without migrating
+// existing save data — byte values are load-bearing for v1.2.1 compat.
+static constexpr std::uint32_t make_fourcc(const char (&s)[5])
+{
+    return (static_cast<std::uint32_t>(static_cast<unsigned char>(s[0])) << 24) |
+           (static_cast<std::uint32_t>(static_cast<unsigned char>(s[1])) << 16) |
+           (static_cast<std::uint32_t>(static_cast<unsigned char>(s[2])) <<  8) |
+            static_cast<std::uint32_t>(static_cast<unsigned char>(s[3]));
+}
+
+static constexpr std::uint32_t kPluginUID              = make_fourcc("UNrd");
+static constexpr std::uint32_t kRecordType_ReadNotes   = make_fourcc("RdNt");
+static constexpr std::uint32_t kRecordType_MarkedNotes = make_fourcc("MkNt");
+static constexpr std::uint32_t kDataVersion            = 1;
+
+// Pin the byte values against v1.2.1 MSVC multi-char-literal packing — if
+// someone ever "fixes" make_fourcc to swap endianness these will fire before
+// a broken DLL ships and orphans every user's cosave.
+static_assert(kPluginUID              == 0x554E7264u, "UNrd tag must stay 0x554E7264");
+static_assert(kRecordType_ReadNotes   == 0x52644E74u, "RdNt tag must stay 0x52644E74");
+static_assert(kRecordType_MarkedNotes == 0x4D6B4E74u, "MkNt tag must stay 0x4D6B4E74");
 
 static void WriteFormIDSet(const F4SE::SerializationInterface* intfc,
     std::uint32_t recordType, const std::set<std::uint32_t>& set)
@@ -412,7 +420,7 @@ public:
     void Call(const Params& params) override
     {
         if (params.argCount < 1) { *params.retVal = false; return; }
-        std::uint32_t formID = params.args[0].GetUInt();
+        auto formID = static_cast<std::uint32_t>(GFxToNumber(params.args[0]));
         *params.retVal = (g_readNotes.count(formID) > 0);
     }
 };
@@ -667,21 +675,16 @@ static void StripKnownSuffixesFromEntry(GFx::Value& entry, const char* itemLabel
     if (!entry.HasMember("text") || !entry.GetMember("text", &textVal) || !textVal.IsString())
         return;
 
-    const char* t = textVal.GetString();
-    std::size_t tLen = std::strlen(t);
+    std::string_view text{ textVal.GetString() };
 
-    const char* candidates[2] = { g_cfgSuffix, g_cfgMarkSuffix };
-    for (const char* s : candidates)
+    for (std::string_view suffix : { std::string_view{ g_cfgSuffix }, std::string_view{ g_cfgMarkSuffix } })
     {
-        std::size_t sLen = std::strlen(s);
-        if (sLen == 0 || tLen < sLen) continue;
-        if (std::strcmp(t + tLen - sLen, s) != 0) continue;
+        if (suffix.empty() || !text.ends_with(suffix)) continue;
 
-        char buf[512];
-        std::snprintf(buf, sizeof(buf), "%.*s", static_cast<int>(tLen - sLen), t);
-        GFx::Value clean{ buf };
+        std::string stripped{ text.substr(0, text.size() - suffix.size()) };
+        GFx::Value clean{ stripped.c_str() };
         entry.SetMember("text", clean);
-        LOG(2, "UnreadNotes: Stripped \"{}\" from \"{}\"", s, itemLabel);
+        LOG(2, "UnreadNotes: Stripped \"{}\" from \"{}\"", suffix, itemLabel);
         return;
     }
 }
@@ -803,15 +806,10 @@ public:
     RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent& evn,
         RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
     {
-        const char* name = evn.menuName.c_str();
-
         // MarkAsRead: detect note/holotape activation from Pip-Boy
         if (evn.opening)
         {
-            bool isBookMenu = (std::strcmp(name, "BookMenu") == 0);
-            bool isTerminalMenu = (std::strcmp(name, "TerminalMenu") == 0);
-
-            if (isBookMenu || isTerminalMenu)
+            if (evn.menuName == "BookMenu" || evn.menuName == "TerminalMenu")
             {
                 if (GFx::Movie* movie = GetPipboyMovie())
                 {
@@ -826,7 +824,7 @@ public:
                         else if (g_readNotes.insert(info.formID).second)
                         {
                             LOG(1, "UnreadNotes: Marked {} \"{}\" (FormID {:08X}) as read via {} (total: {})",
-                                GetItemTypeLabel(info), info.name, info.formID, name,
+                                GetItemTypeLabel(info), info.name, info.formID, evn.menuName.c_str(),
                                 g_readNotes.size());
                         }
                     }
@@ -835,7 +833,7 @@ public:
         }
 
         // Hot-reload config on each Pip-Boy open
-        if (evn.opening && std::strcmp(name, "PipboyMenu") == 0)
+        if (evn.opening && evn.menuName == "PipboyMenu")
         {
             LoadConfig();
             LOG(1, "UnreadNotes: PipboyMenu opened");
@@ -843,7 +841,7 @@ public:
 
         // Drop the cached PipboyMenu* when it closes — the pointer becomes
         // dangling once the menu is destroyed.
-        if (!evn.opening && std::strcmp(name, "PipboyMenu") == 0)
+        if (!evn.opening && evn.menuName == "PipboyMenu")
         {
             g_lastPipboyMenu = nullptr;
             LOG(1, "UnreadNotes: PipboyMenu closed — cached pointer cleared");

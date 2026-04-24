@@ -8,6 +8,9 @@
 #include <shlobj.h>
 
 #include <set>
+#include <string>
+#include <string_view>
+#include <filesystem>
 #include <cstdio>
 #include <cstring>
 
