@@ -1130,6 +1130,10 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 
     REX::INFO("UnreadNotes: loading");
 
+    const auto version = REL::Module::GetSingleton()->version();
+    const char* tier = REL::Module::IsRuntimeOG() ? "OG" : REL::Module::IsRuntimeNG() ? "NG" : "AE";
+    REX::INFO("UnreadNotes: detected runtime {} ({})", version, tier);
+
     LoadConfig();
 
     // --- Scaleform ---
