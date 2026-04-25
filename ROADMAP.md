@@ -1,16 +1,19 @@
 # UnreadNotes — Roadmap & Ideas
 
-## Current State (v1.0 — Publish-ready)
+## Current State (v1.3.0 — Released)
+- **Multi-runtime support**: single DLL works on OG (1.10.163), NG (1.10.984), and AE (1.11.x), auto-detected at load. Built on CommonLibF4 + Address Library.
 - Read tracking for notes and text holotapes via MenuOpenCloseEvent (BookMenu/TerminalMenu)
 - Read tracking for audio holotapes via `DataObj.HolotapePlaying` edge detection
-- Cosave persistence across saves
-- Renderer alpha dimming (whole row: text, counts, icons)
-- Configurable "(Read)" suffix
-- AdvanceMovie hook for per-frame display refresh
+- Toggle key for manual read/unread on any item; mark key for "stay bright, skip auto-mark"
+- Cosave persistence across saves (backwards-compatible with 1.2.1 cosaves)
+- Renderer alpha dimming (whole row: text, counts, icons) — requires FallUI; suffix/toggle/mark function on vanilla Pip-Boy without it
+- Configurable "(Read)" and "(*)" mark suffixes
+- PipboyMenu vtable swap on AdvanceMovie slot 0x04 for per-frame display refresh
 - INI config with hot-reload on Pip-Boy open
 - Debug commands (bResetAll, bMarkAllRead)
 - Configurable log levels (0=minimal, 1=normal, 2=debug)
-- Per-frame performance profiling at log level 2 (~180us avg, ~1% frame budget)
+- Startup runtime log line for diagnostic clarity in bug reports
+- Per-frame performance profiling at log level 2 (~180us avg, ~1% frame budget — measured pre-CommonLibF4 port; should be similar post-port)
 
 **Sort-to-bottom parked** — see `feature/sort-to-bottom-wip` branch. InvalidateData calls during FallUI's sort disturb selectedEntry for audio holotapes. Needs a different approach (possibly hooking FallUI's sort at a lower level).
 
@@ -36,7 +39,7 @@
 - [x] ~~Configurable logging levels~~ — DONE. iLogLevel=0-2. Perf stats gated behind level 2.
 - [x] ~~Audio holotape detection~~ — DONE. Polls `root.Menu_mc.DataObj.HolotapePlaying` in AdvanceMovie_Hook and edge-detects the false→true transition. The tape-loading animation briefly drops the flag between plays, so seamless swaps (new tape without explicit stop) produce detectable cycles. First-sample suppression prevents spurious marks when reopening the Pipboy mid-playback.
 - [ ] **Unified read-tracking for world reads** — BookMenu/TerminalMenu detection only fires while PipboyMenu is also open. Reading a note/holotape from the world (on a desk, in a terminal) doesn't mark it. Investigate getting the formID from BookMenu/TerminalMenu directly rather than via PipboyMenu selection lookup — would cover both contexts with one code path.
-- [ ] **Next-gen (1.10.980) compatibility** — user reports on Nexus confirm the plugin silently refuses to load on next-gen ("AE") runtimes: the `F4SEPlugin_Load` version guard trips, never reaches `LoadConfig()`, which is why affected users also see "no INI was created". Dual-target build: clone F4SE 0.7.x branch, build its libs /MT, have CMake produce `UnreadNotes_163.dll` + `UnreadNotes_980.dll` with matching `RUNTIME_VERSION` and F4SE lib links. Key unknown: the `AdvanceMovie` offset `0x0210EED0` is 1.10.163-specific — needs re-locating on next-gen, ideally via Address Library for F4SE (modern version-neutral approach) so we don't carry two hardcoded offsets. Steam install on this machine can serve as the next-gen test rig.
+- [x] ~~**Next-gen / AE compatibility**~~ — DONE in v1.3.0. Took the single-DLL CommonLibF4 + Address Library route rather than the dual-DLL CMake approach originally sketched here. AdvanceMovie hook reworked from xbyak branch trampoline at hardcoded `0x0210EED0` to a vtable swap on `RE::VTABLE::PipboyMenu[0]` slot 0x04 (covered by Address Library on all three runtimes). OG and AE confirmed in-game; NG community-tested.
 - [ ] Option to use a prefix instead of/as well as suffix (e.g. prepend a marker character)
 - [x] ~~Games category~~ — PARTIAL. Confirmed they don't trigger `HolotapePlaying` or BookMenu. Manually markable via the toggle key; auto-detection would need a hook on the minigame-launch menu (not yet investigated).
 - [x] ~~Misc notes (filterFlag 0x200 — recipes, schematics, contracts like Shelley's contract)~~ — PARTIAL. Manually markable via the toggle key (included in `kFilterMask_MarkableItems`); auto-detection still not possible since they don't open BookMenu.
@@ -52,25 +55,25 @@
 - [ ] Sorting options: alphabetical within read/unread groups, or by read order (most recently read first/last)
 - [ ] Stats: "X of Y notes read" display somewhere in the Pip-Boy
 - [ ] Optional notification when a new note/holotape is picked up ("New note added")
-- [ ] Support for non-FallUI setups (vanilla Pip-Boy UI)
+- [x] ~~Support for non-FallUI setups (vanilla Pip-Boy UI)~~ — PARTIAL (discovered 2026-04-25). Suffix and toggle/mark keys work on the vanilla Pip-Boy because the entryList path resolves there too. Dimming doesn't — relies on FallUI's renderer setup. v1.3.0 description and readme reflect this; FallUI is now Recommended rather than Required.
 
 ## Technical Debt
 - [x] ~~Review SEH exception handlers~~ — RESOLVED. All removed during cleanup. Hook code is stable. If crashes are reported, can add SEH wrapper around the hook body.
 - [ ] Proper git history: squash/clean experimental commits before merging to develop
 
-## Publishing
-Audio holotape detection (the last functional blocker) is resolved.
-Remaining items are mostly documentation and release packaging.
+## Publishing (v1.0 → v1.3.0 archaeology)
 
-- [ ] NexusMods page — full rewrite of description for v2 (pure C++ approach, no SWF patches)
-- [ ] New screenshots showing dimming, "(Read)" suffix, config options
-- [ ] Remove original mod file from NexusMods (old SWF-patching version)
-- [ ] Review permissions — more permissive now (no FallUI SWFs, just our DLL)
-- [ ] Thanks/credits section — FallUI/M8r (decompiled source reference), F4SE team
-- [ ] Requires F4SE (v0.6.23) — document dependency
-- [ ] Requires FallUI Inventory — document dependency (we rely on FallUI's sort system + text parsing)
-- [ ] No ESP/ESM required — DLL-only mod
-- [ ] Release archive: just UnreadNotes.dll (INI auto-created on first run)
-- [ ] Changelog / versioning
-- [ ] Document INI settings with examples in the mod description
-- [ ] Compatibility notes: GOG and Steam versions, other Pip-Boy mods
+All items below are done as of v1.3.0; kept here as a checklist record.
+
+- [x] ~~NexusMods page — full rewrite of description for v2 (pure C++ approach, no SWF patches)~~
+- [x] ~~New screenshots showing dimming, "(Read)" suffix, config options~~
+- [x] ~~Remove original mod file from NexusMods (old SWF-patching version)~~
+- [x] ~~Review permissions — more permissive now (no FallUI SWFs, just our DLL)~~
+- [x] ~~Thanks/credits section — FallUI/M8r (decompiled source reference), F4SE team~~
+- [x] ~~Document F4SE dependency~~ — v1.3.0 covers OG (v0.6.23) and NG/AE (v0.7.x)
+- [x] ~~Document FallUI Inventory dependency~~ — softened to Recommended in v1.3.0; works on vanilla too with reduced functionality
+- [x] ~~No ESP/ESM required — DLL-only mod~~
+- [x] ~~Release archive: just UnreadNotes.dll (INI auto-created on first run)~~
+- [x] ~~Changelog / versioning~~ — CHANGELOG.md tracks 1.0 → 1.3.0
+- [x] ~~Document INI settings with examples in the mod description~~
+- [x] ~~Compatibility notes: GOG and Steam versions, other Pip-Boy mods~~
