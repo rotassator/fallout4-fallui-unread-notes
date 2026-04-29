@@ -38,7 +38,8 @@
 
 - [x] ~~Configurable logging levels~~ — DONE. iLogLevel=0-2. Perf stats gated behind level 2.
 - [x] ~~Audio holotape detection~~ — DONE. Polls `root.Menu_mc.DataObj.HolotapePlaying` in AdvanceMovie_Hook and edge-detects the false→true transition. The tape-loading animation briefly drops the flag between plays, so seamless swaps (new tape without explicit stop) produce detectable cycles. First-sample suppression prevents spurious marks when reopening the Pipboy mid-playback.
-- [ ] **Unified read-tracking for world reads** — BookMenu/TerminalMenu detection only fires while PipboyMenu is also open. Reading a note/holotape from the world (on a desk, in a terminal) doesn't mark it. Investigate getting the formID from BookMenu/TerminalMenu directly rather than via PipboyMenu selection lookup — would cover both contexts with one code path.
+- [ ] **Unified read-tracking for world reads** — BookMenu/TerminalMenu detection only fires while PipboyMenu is also open. Reading a note/holotape from the world (on a desk, in a terminal) doesn't mark it. Investigate getting the formID from BookMenu/TerminalMenu directly rather than via PipboyMenu selection lookup — would cover both contexts with one code path. Now substantially easier post-1.3.0: any new menu-event hook gets OG/NG/AE coverage for free via Address Library.
+- [ ] **Global title-modification hook** — broader reframing of the original "(Read) tag at world activation prompt" idea (Nexus v1.2 comments). Hook `TESFullName::GetFullName` / `InventoryEntryData::GetDisplayName` to inject the suffix at the canonical name source rather than per-frame in the renderer. The suffix then appears everywhere the engine reads the display name: world activation prompt, container/companion transfer UIs, favorites menu, vanilla Pip-Boy — and the existing per-frame renderer suffix injection becomes redundant (simplification). Pure live decoration: zero save state, removing the plugin fully reverts. Caveats: must drop the renderer suffix injection to avoid double-suffix; FallUI's alphabetical sort would group read items at the bottom as a side-effect (could be a feature, could surprise users); needs early-out by form type for perf since `GetFullName` is hot; gated by a new `bGlobalNameSuffix` INI flag (default on). Vtable swap pattern from `PipboyMenu::AdvanceMovie` is reusable; Address Library covers `RE::VTABLE::TESFullName` across all three runtimes.
 - [x] ~~**Next-gen / AE compatibility**~~ — DONE in v1.3.0. Took the single-DLL CommonLibF4 + Address Library route rather than the dual-DLL CMake approach originally sketched here. AdvanceMovie hook reworked from xbyak branch trampoline at hardcoded `0x0210EED0` to a vtable swap on `RE::VTABLE::PipboyMenu[0]` slot 0x04 (covered by Address Library on all three runtimes). OG and AE confirmed in-game; NG community-tested.
 - [ ] Option to use a prefix instead of/as well as suffix (e.g. prepend a marker character)
 - [x] ~~Games category~~ — PARTIAL. Confirmed they don't trigger `HolotapePlaying` or BookMenu. Manually markable via the toggle key; auto-detection would need a hook on the minigame-launch menu (not yet investigated).
@@ -47,19 +48,17 @@
 ## Features — Ideas (no commitment)
 - [ ] MCM integration (replace or supplement INI config) — INI works fine, MCM is nice-to-have for the subset of users who prefer it. Deferred.
 - [ ] Quest-marker cube on notes tied to active quests (FO76-style) — user request from Nexus v1.1 comments. Visual side is easy (inject coloured symbol into entry text). Blocker is the detection side: FO4 quest objectives reference aliases rather than specific item FormIDs, so reliably mapping "this objective wants you to read that exact note" would be patchy. Half-working would be worse than nothing.
-- [ ] **"(Read)" tag on world activation prompt** — user request (Nexus v1.2 comments). Show read/marked state at the crosshair pickup prompt, before the item reaches the Pip-Boy. Detection is straightforward (crosshair ref → base form → `g_readNotes` lookup). Display requires HUDMenu text integration — either a hook exposed by FallUI - HUD, or a game-side hook into HUDMenu's activate-text routine. No SWF patches (per the hard rule). Worth a FallUI HUD decompile recon before committing.
+- [ ] Stats: "X of Y notes read" display somewhere in the Pip-Boy — wants a sensible injection point first; no obvious home for the text.
 
 ## Features — Future
 - [ ] Custom icon for read/unread items (would need FallUI ExtraIcon integration or similar)
-- [ ] Per-item "mark as unread" (via Pip-Boy interaction — maybe a hotkey while hovering?)
+- [x] ~~Per-item "mark as unread" (via Pip-Boy interaction — maybe a hotkey while hovering?)~~ — DONE. Subsumed by the v1.1.0 toggle/mark feature: `bToggleKey` flips read state on the hovered item and `iMarkKey` flips mark state.
 - [ ] Sorting options: alphabetical within read/unread groups, or by read order (most recently read first/last)
-- [ ] Stats: "X of Y notes read" display somewhere in the Pip-Boy
-- [ ] Optional notification when a new note/holotape is picked up ("New note added")
 - [x] ~~Support for non-FallUI setups (vanilla Pip-Boy UI)~~ — PARTIAL (discovered 2026-04-25). Suffix and toggle/mark keys work on the vanilla Pip-Boy because the entryList path resolves there too. Dimming doesn't — relies on FallUI's renderer setup. v1.3.0 description and readme reflect this; FallUI is now Recommended rather than Required.
 
 ## Technical Debt
 - [x] ~~Review SEH exception handlers~~ — RESOLVED. All removed during cleanup. Hook code is stable. If crashes are reported, can add SEH wrapper around the hook body.
-- [ ] Proper git history: squash/clean experimental commits before merging to develop
+- [x] ~~Proper git history: squash/clean experimental commits before merging to develop~~ — DONE through v1.3.0. Develop's history is clean: every merged commit is a coherent semantic step (Conventional Commits throughout, no `wip:`/`fixup:` noise). The remaining `wip:` commits live on parked branches (`feature/perf-caching`, `feature/sort-to-bottom-wip`) which is the intended use of the prefix — paused drafts, not history.
 
 ## Publishing (v1.0 → v1.3.0 archaeology)
 
