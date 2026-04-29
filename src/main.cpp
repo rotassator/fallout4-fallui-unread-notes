@@ -45,7 +45,8 @@ static const char* kEntryListPath =
 
 
 // ============================================================================
-// Configuration (loaded from Data/F4SE/Plugins/UnreadNotes.ini)
+// Configuration (loaded via a three-file precedence chain — see GetGameRoot
+// and friends below)
 // ============================================================================
 static int           g_cfgLogLevel = 1;
 static float         g_cfgBrightness = 0.5f;
@@ -94,108 +95,480 @@ static void SanitiseSuffix(const char* rawBuf, char* out, std::size_t outSize, c
             fieldName, rawBuf, out);
 }
 
-// Build the absolute path to UnreadNotes.ini next to the running executable.
-// Using GetModuleFileName avoids mis-targeting when a mod organiser launches
-// Fallout 4 with a virtualised or unexpected working directory.
-static const char* GetIniPath()
+// Normalise a suffix's leading whitespace: trim any leading spaces/tabs the
+// user may have typed, then prepend exactly one space so the in-memory value
+// is "ready to append" with consistent visual separation. Idempotent — the
+// transformation is stable on already-normalised values.
+//
+// This decouples the on-disk INI value (clean, no leading space, no quotes
+// needed) from the displayed text format (always has a separating space).
+// Defaults INI ships values like `sSuffix=(Read)` so MCM's textinput shows
+// `(Read)` cleanly; the DLL re-adds the space at apply time.
+static void NormaliseSuffix(char* buf, std::size_t bufSize)
 {
-    static std::string s_iniPath;
-    if (!s_iniPath.empty())
-        return s_iniPath.c_str();
+    if (!buf[0]) return;  // empty — leave alone, no decoration
+
+    const char* src = buf;
+    while (*src == ' ' || *src == '\t') ++src;
+    if (!*src) { buf[0] = '\0'; return; }  // all whitespace == empty
+
+    char temp[64];
+    std::snprintf(temp, sizeof(temp), " %s", src);
+    strncpy_s(buf, bufSize, temp, _TRUNCATE);
+}
+
+// ----------------------------------------------------------------------------
+// Configuration paths — three-file precedence chain
+// ----------------------------------------------------------------------------
+// v1.4.0+ reads settings via a deterministic fallback chain:
+//   1. Data/MCM/Settings/UnreadNotes.ini        (MCM-managed user settings)
+//   2. Data/F4SE/Plugins/UnreadNotes.ini        (legacy / manual override)
+//   3. Data/MCM/Config/UnreadNotes/settings.ini (shipped defaults)
+//   4. Hardcoded fallback constants (paranoia)
+// The DLL is file-based and indifferent to MCM-the-mod's presence; MCM
+// detection only matters for the migration trigger (handled separately).
+// On first launch the legacy path (2) is auto-populated by copying (3) to
+// it, so non-MCM users get a pre-filled editable file without us shipping
+// a separate seed template.
+
+static const std::filesystem::path& GetGameRoot()
+{
+    static std::filesystem::path s_root;
+    if (!s_root.empty()) return s_root;
 
     char  exePath[MAX_PATH];
     DWORD len = GetModuleFileNameA(nullptr, exePath, sizeof(exePath));
     if (len == 0 || len >= sizeof(exePath))
     {
-        REX::WARN("UnreadNotes: WARNING — GetModuleFileName failed (len={}), using relative path", len);
-        s_iniPath = R"(Data\F4SE\Plugins\UnreadNotes.ini)";
-        return s_iniPath.c_str();
+        REX::WARN("UnreadNotes: WARNING — GetModuleFileName failed (len={}), using cwd", len);
+        s_root = std::filesystem::current_path();
+        return s_root;
     }
 
-    std::filesystem::path p{ exePath };
-    p.remove_filename();
-    p /= "Data/F4SE/Plugins/UnreadNotes.ini";
-    s_iniPath = p.string();
-    return s_iniPath.c_str();
+    s_root = exePath;
+    s_root.remove_filename();
+    return s_root;
 }
 
-static void CreateDefaultConfig(const char* path)
+static const char* GetMcmSettingsPath()
 {
-    FILE* f = nullptr;
-    fopen_s(&f, path, "w");
-    if (!f) return;
-
-    std::fprintf(f,
-        ";\n"
-        "; UnreadNotes - Configuration\n"
-        ";\n"
-        "; Controls how read notes and holotapes appear in the Pip-Boy inventory.\n"
-        ";\n"
-        "\n"
-        "[Display]\n"
-        "\n"
-        "; Brightness of read items (0-100).\n"
-        "; 100 = full brightness (no change), 50 = half brightness, 0 = invisible.\n"
-        "; Default: 50\n"
-        "iReadBrightness=50\n"
-        "\n"
-        "; Text appended to read item names. Use quotes for values with spaces.\n"
-        "; Set to \"\" for no suffix. Stick to ASCII characters only — the Pip-Boy\n"
-        "; font doesn't support unicode.\n"
-        "; Default: \" (Read)\"\n"
-        "sSuffix=\" (Read)\"\n"
-        "\n"
-        "; Text appended to MARKED item names (items flagged with the mark key —\n"
-        "; stay bright and are excluded from auto-mark-as-read).\n"
-        "; Same ASCII-only rules as sSuffix.\n"
-        "; Default: \" (*)\"\n"
-        "sMarkSuffix=\" (*)\"\n"
-        "\n"
-        "; Logging level. 0 = minimal, 1 = normal, 2 = debug (includes perf stats).\n"
-        "; Default: 1\n"
-        "iLogLevel=1\n"
-        "\n"
-        "[Input]\n"
-        "\n"
-        "; Toggle read/unread on the selected Pip-Boy item with a keypress.\n"
-        "; Value is the decimal code from the Fallout CK wiki's scan-code table.\n"
-        "; Commented out by default so no key is claimed until you opt in.\n"
-        "; Reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes\n"
-        "; Suggested unused keys: 189 (\"-\"), 187 (\"=\"), 220 (\"\\\")\n"
-        ";iToggleKey=189\n"
-        "\n"
-        "; Mark/unmark the selected item. Marked items stay bright, get sMarkSuffix,\n"
-        "; and are skipped by auto-mark-as-read. Useful for config holotapes and\n"
-        "; notes whose FormIDs are reused across different in-game contexts.\n"
-        "; Same reference as iToggleKey; pick a different unused key.\n"
-        ";iMarkKey=187\n"
-        "\n"
-        "[Debug]\n"
-        "; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.\n"
-        "bResetAll=0\n"
-        "bMarkAllRead=0\n"
-    );
-    std::fclose(f);
-    REX::INFO("UnreadNotes: Created default config at {}", path);
+    static std::string s = (GetGameRoot() / "Data/MCM/Settings/UnreadNotes.ini").make_preferred().string();
+    return s.c_str();
 }
+
+static const char* GetLegacyIniPath()
+{
+    static std::string s = (GetGameRoot() / "Data/F4SE/Plugins/UnreadNotes.ini").make_preferred().string();
+    return s.c_str();
+}
+
+static const char* GetMcmDefaultsPath()
+{
+    static std::string s = (GetGameRoot() / "Data/MCM/Config/UnreadNotes/settings.ini").make_preferred().string();
+    return s.c_str();
+}
+
+// Presence of MCM's own self-config directory is a reliable proxy for "MCM
+// is active in this session". Both Vortex and MO2 conditionally deploy
+// MCM's files based on whether it's enabled in the active profile.
+static bool IsMcmInstalled()
+{
+    static int cached = -1;
+    if (cached < 0)
+    {
+        std::string p = (GetGameRoot() / "Data/MCM/Config/MCM").make_preferred().string();
+        cached = (GetFileAttributesA(p.c_str()) != INVALID_FILE_ATTRIBUTES) ? 1 : 0;
+    }
+    return cached != 0;
+}
+
+// First-run seeding: if the legacy INI doesn't exist, copy the shipped
+// defaults to it. After this one-time copy, the legacy file is the user's
+// to edit; mod updates don't touch it.
+static void EnsureLegacyIniExists()
+{
+    const char* legacy = GetLegacyIniPath();
+    if (GetFileAttributesA(legacy) != INVALID_FILE_ATTRIBUTES)
+    {
+        REX::INFO("UnreadNotes: legacy config already exists at {}, no seeding needed", legacy);
+        return;
+    }
+
+    const char* defaults = GetMcmDefaultsPath();
+    if (GetFileAttributesA(defaults) == INVALID_FILE_ATTRIBUTES)
+    {
+        REX::WARN("UnreadNotes: WARNING — defaults INI missing at {}, can't seed legacy", defaults);
+        return;
+    }
+
+    if (CopyFileA(defaults, legacy, /*bFailIfExists*/ TRUE))
+        REX::INFO("UnreadNotes: Seeded legacy config at {} from defaults", legacy);
+    else
+        REX::WARN("UnreadNotes: WARNING — failed to seed legacy config (err={}): {} -> {}",
+                  GetLastError(), defaults, legacy);
+}
+
+// ----------------------------------------------------------------------------
+// Config readers — walk the precedence chain
+// ----------------------------------------------------------------------------
+// Each helper returns the path where the value was found (or nullptr if it
+// fell through to the supplied default). Callers may use the path to write
+// back into the same file (e.g. the auto-reset of debug triggers) without
+// guessing where the value originated.
+
+static const char* ReadConfigInt(const char* section, const char* key,
+                                 int defaultValue, int& out)
+{
+    constexpr int kSentinel = INT_MIN;
+    const char* paths[] = {
+        GetMcmSettingsPath(),
+        GetLegacyIniPath(),
+        GetMcmDefaultsPath(),
+    };
+    for (const char* path : paths)
+    {
+        if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+            continue;
+        int v = GetPrivateProfileIntA(section, key, kSentinel, path);
+        if (v != kSentinel)
+        {
+            out = v;
+            return path;
+        }
+    }
+    out = defaultValue;
+    return nullptr;
+}
+
+static const char* ReadConfigString(const char* section, const char* key,
+                                    const char* defaultValue,
+                                    char* out, std::size_t outSize)
+{
+    constexpr const char* kSentinel = "\x01__UNREADNOTES_NOT_FOUND__\x01";
+    const char* paths[] = {
+        GetMcmSettingsPath(),
+        GetLegacyIniPath(),
+        GetMcmDefaultsPath(),
+    };
+    for (const char* path : paths)
+    {
+        if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+            continue;
+        GetPrivateProfileStringA(section, key, kSentinel, out,
+                                 static_cast<DWORD>(outSize), path);
+        if (std::strcmp(out, kSentinel) != 0)
+            return path;
+    }
+    strncpy_s(out, outSize, defaultValue, _TRUNCATE);
+    return nullptr;
+}
+
+// Read an int from user-override files only — skips the shipped defaults.
+// Used when a key has a legacy alias (e.g. iToggleKey → sToggleKey): we want
+// "user explicitly set the override under either name" to win over "default
+// from the shipped file." Without this distinction, defaults' `sToggleKey=0`
+// would shadow a v1.3.0 non-MCM user's `iToggleKey=220` in F4SE-Plugins.
+static const char* ReadUserConfigInt(const char* section, const char* key, int& out)
+{
+    constexpr int kSentinel = INT_MIN;
+    const char* paths[] = {
+        GetMcmSettingsPath(),
+        GetLegacyIniPath(),
+    };
+    for (const char* path : paths)
+    {
+        if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
+            continue;
+        int v = GetPrivateProfileIntA(section, key, kSentinel, path);
+        if (v != kSentinel)
+        {
+            out = v;
+            return path;
+        }
+    }
+    return nullptr;
+}
+
+// Short label for a config source path. Used by LoadConfig's source summary
+// log line so a single glance at the F4SE log shows where each setting
+// resolved from. Path-derived (mirrors `MCM-Settings` style) rather than
+// role-named — the F4SE/Plugins file isn't strictly "legacy" since it's the
+// canonical user-editable file for non-MCM users.
+static const char* ConfigSourceLabel(const char* path)
+{
+    if (!path) return "default";
+    if (std::strcmp(path, GetMcmSettingsPath()) == 0) return "MCM-Settings";
+    if (std::strcmp(path, GetLegacyIniPath())  == 0) return "F4SE-Plugins";
+    if (std::strcmp(path, GetMcmDefaultsPath()) == 0) return "Defaults";
+    return "?";
+}
+
+
+// ----------------------------------------------------------------------------
+// First-launch setup — migration (MCM users) or legacy seeding (non-MCM)
+// ----------------------------------------------------------------------------
+// Branches on MCM presence. For MCM users: check for v1.3.0 → v1.4.0 config
+// migration. For non-MCM users: seed the legacy override file with defaults
+// so they have a pre-filled editable file. Each branch is idempotent.
+//
+// Why split: with MCM, the legacy file's existence is an unambiguous signal
+// of v1.3.0 user data and triggers migration. Auto-seeding the legacy for
+// MCM users would muddy that signal and cause the migration trigger to fire
+// against just-seeded defaults on the second launch. With MCM not installed,
+// the legacy file is the canonical user-editable override file and seeding
+// it with defaults is the friendly thing to do.
+
+static void MaybeMigrateLegacyToMcm()
+{
+    const char* mcmSettings = GetMcmSettingsPath();
+    const char* legacy      = GetLegacyIniPath();
+
+    // Already migrated, or MCM has been used to write at least one setting.
+    if (GetFileAttributesA(mcmSettings) != INVALID_FILE_ATTRIBUTES)
+    {
+        REX::INFO("UnreadNotes: migration skipped — {} already exists", mcmSettings);
+        return;
+    }
+
+    // Nothing to migrate from.
+    if (GetFileAttributesA(legacy) == INVALID_FILE_ATTRIBUTES)
+    {
+        REX::INFO("UnreadNotes: migration skipped — no legacy config to migrate from ({})", legacy);
+        return;
+    }
+
+    // Make sure Data/MCM/Settings/ exists. Normally it does (MCM creates it),
+    // but be defensive — WritePrivateProfileStringA fails silently if not.
+    std::string settingsDir = (GetGameRoot() / "Data/MCM/Settings").string();
+    CreateDirectoryA(settingsDir.c_str(), nullptr);  // idempotent (returns FALSE if exists)
+
+    // Copy all sections + key=value pairs from legacy to MCM Settings. We
+    // strip comments and blank lines via GetPrivateProfileSection — MCM
+    // Settings INIs are values-only by convention (see Upscaling.ini for
+    // reference). Comments live in the defaults file.
+    char sectionsBuf[8192] = {};
+    DWORD len = GetPrivateProfileSectionNamesA(sectionsBuf, sizeof(sectionsBuf), legacy);
+    if (len == 0 || len >= sizeof(sectionsBuf) - 2)
+    {
+        REX::WARN("UnreadNotes: WARNING — section enumeration of {} failed or truncated; aborting migration", legacy);
+        return;
+    }
+
+    int copiedKeys = 0;
+    for (const char* section = sectionsBuf; *section; section += std::strlen(section) + 1)
+    {
+        char sectionData[8192] = {};
+        DWORD slen = GetPrivateProfileSectionA(section, sectionData, sizeof(sectionData), legacy);
+        if (slen == 0 || slen >= sizeof(sectionData) - 2)
+            continue;
+
+        for (const char* entry = sectionData; *entry; entry += std::strlen(entry) + 1)
+        {
+            const char* eq = std::strchr(entry, '=');
+            if (!eq) continue;
+            std::string key(entry, eq - entry);
+            std::string value(eq + 1);
+            std::string destSection = section;
+
+            // v1.4.0 normalisation — see CleanupOrphanedKeys for the
+            // idempotent post-migration cleanup that handles already-
+            // migrated users with the pre-1.4.0 layout.
+            if (key == "iLogLevel")
+            {
+                // Section moved [Display] -> [Debug]: it's a debug knob, not a
+                // display knob.
+                destSection = "Debug";
+            }
+            else if (key == "iToggleKey")
+            {
+                // Renamed for the textinput + ModSettingString convention.
+                key = "sToggleKey";
+            }
+            else if (key == "iMarkKey")
+            {
+                key = "sMarkKey";
+            }
+            else if (key == "sSuffix" || key == "sMarkSuffix")
+            {
+                // Normalise: strip wrapping quotes (INI syntax for preserving
+                // a leading space) and trim leading whitespace. The DLL
+                // re-prepends a single space at apply time via NormaliseSuffix,
+                // so on-disk values stay clean and MCM's textinput shows the
+                // visible part of the suffix without quote-noise.
+                if (value.size() >= 2 && value.front() == '"' && value.back() == '"')
+                    value = value.substr(1, value.size() - 2);
+                std::size_t start = value.find_first_not_of(" \t");
+                if (start == std::string::npos) value.clear();
+                else                            value = value.substr(start);
+            }
+
+            if (WritePrivateProfileStringA(destSection.c_str(), key.c_str(), value.c_str(), mcmSettings))
+                ++copiedKeys;
+        }
+    }
+
+    REX::INFO("UnreadNotes: migrated {} config values from {} to {}",
+              copiedKeys, legacy, mcmSettings);
+
+    // Prepend tombstone to the legacy file. Idempotent — if our marker is
+    // already present (e.g. user deleted MCM Settings post-migration and we
+    // re-migrated), skip the prepend so we don't stack tombstones.
+    constexpr const char* kTombstoneMarker = "UnreadNotes \xE2\x80\x94 config migrated to the MCM directory layout";
+
+    char headBuf[256] = {};
+    if (FILE* fr = nullptr; (fopen_s(&fr, legacy, "rb"), fr != nullptr))
+    {
+        std::fread(headBuf, 1, sizeof(headBuf) - 1, fr);
+        std::fclose(fr);
+    }
+    if (std::strstr(headBuf, kTombstoneMarker) != nullptr)
+        return;
+
+    // Read full original content
+    std::string original;
+    FILE* fr = nullptr;
+    fopen_s(&fr, legacy, "rb");
+    if (!fr)
+    {
+        REX::WARN("UnreadNotes: WARNING — couldn't open {} for read during tombstone prepend", legacy);
+        return;
+    }
+    std::fseek(fr, 0, SEEK_END);
+    long fileSize = std::ftell(fr);
+    std::fseek(fr, 0, SEEK_SET);
+    if (fileSize > 0)
+    {
+        original.resize(static_cast<std::size_t>(fileSize));
+        std::fread(original.data(), 1, original.size(), fr);
+    }
+    std::fclose(fr);
+
+    // Tombstone wording is state-agnostic: describes the new location and
+    // shadow precedence without claiming MCM is currently active. Stays
+    // accurate even if the user later disables MCM.
+    static constexpr const char* kTombstone =
+        ";\n"
+        "; UnreadNotes \xE2\x80\x94 config migrated to the MCM directory layout (v1.4.0+).\n"
+        ";\n"
+        "; Defaults:  Data/MCM/Config/UnreadNotes/settings.ini   (shipped, refreshed each release)\n"
+        "; Overrides: Data/MCM/Settings/UnreadNotes.ini          (your customisations live here)\n"
+        ";\n"
+        "; This file's values are kept intact below for downgrade safety, but they\n"
+        "; are SHADOWED by the MCM Settings file when both contain the same key.\n"
+        "; Edit MCM Settings (via the MCM in-game menu, or directly) to change\n"
+        "; settings \xE2\x80\x94 your edits to the values below will not have any effect\n"
+        "; while MCM Settings exists.\n"
+        ";\n"
+        "; (original content below)\n"
+        "\n";
+
+    FILE* fw = nullptr;
+    fopen_s(&fw, legacy, "wb");
+    if (!fw)
+    {
+        REX::WARN("UnreadNotes: WARNING — couldn't open {} for write during tombstone prepend", legacy);
+        return;
+    }
+    std::fwrite(kTombstone, 1, std::strlen(kTombstone), fw);
+    if (!original.empty())
+        std::fwrite(original.data(), 1, original.size(), fw);
+    std::fclose(fw);
+
+    REX::INFO("UnreadNotes: prepended migration tombstone to {}", legacy);
+}
+
+// Idempotent post-migration cleanup. Runs every load, fixes up MCM Settings
+// entries that arose from v1.4.0 section/key changes when a user migrated
+// with a pre-section-move interim build, OR when a v1.3.0 user migrated and
+// the migration override only applies prospectively. After cleanup the file
+// is in canonical v1.4.0 layout.
+static void CleanupOrphanedKeys()
+{
+    const char* mcmSettings = GetMcmSettingsPath();
+    if (GetFileAttributesA(mcmSettings) == INVALID_FILE_ATTRIBUTES)
+        return;
+
+    constexpr int kSentinel = INT_MIN;
+
+    // iLogLevel: section moved [Display] -> [Debug] in v1.4.0. If both exist,
+    // the [Display] entry is an orphan from a pre-section-move migration.
+    if (GetPrivateProfileIntA("Debug",   "iLogLevel", kSentinel, mcmSettings) != kSentinel &&
+        GetPrivateProfileIntA("Display", "iLogLevel", kSentinel, mcmSettings) != kSentinel)
+    {
+        WritePrivateProfileStringA("Display", "iLogLevel", nullptr, mcmSettings);
+        REX::INFO("UnreadNotes: cleaned orphan [Display]/iLogLevel from MCM Settings");
+    }
+
+    // Hotkey keys: renamed i* -> s* for the textinput convention. Forward-
+    // migrate values into the new name then drop the old one.
+    auto cleanupHotkey = [mcmSettings](const char* oldName, const char* newName) {
+        int oldVal = GetPrivateProfileIntA("Input", oldName, kSentinel, mcmSettings);
+        if (oldVal == kSentinel) return;  // nothing to migrate
+
+        int newVal = GetPrivateProfileIntA("Input", newName, kSentinel, mcmSettings);
+        if (newVal == kSentinel)
+        {
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "%d", oldVal);
+            WritePrivateProfileStringA("Input", newName, buf, mcmSettings);
+            REX::INFO("UnreadNotes: forward-migrated [Input]/{}={} -> {}", oldName, oldVal, newName);
+        }
+        WritePrivateProfileStringA("Input", oldName, nullptr, mcmSettings);
+        REX::INFO("UnreadNotes: cleaned legacy [Input]/{} from MCM Settings", oldName);
+    };
+    cleanupHotkey("iToggleKey", "sToggleKey");
+    cleanupHotkey("iMarkKey",   "sMarkKey");
+
+    // Suffix values: strip leading whitespace from pre-1.4.0 quoted/spaced
+    // values so MCM's textinput renders the visible part cleanly. The DLL
+    // re-prepends a single space at apply time via NormaliseSuffix, so the
+    // displayed suffix in-game is unchanged. Idempotent — once stripped,
+    // no leading whitespace, no further work.
+    auto cleanupSuffix = [mcmSettings](const char* keyName) {
+        char buf[64] = {};
+        DWORD len = GetPrivateProfileStringA("Display", keyName, "", buf, sizeof(buf), mcmSettings);
+        if (len == 0 || (buf[0] != ' ' && buf[0] != '\t')) return;
+
+        char* p = buf;
+        while (*p == ' ' || *p == '\t') ++p;
+
+        WritePrivateProfileStringA("Display", keyName, p, mcmSettings);
+        REX::INFO("UnreadNotes: normalised [Display]/{} (stripped leading whitespace)", keyName);
+    };
+    cleanupSuffix("sSuffix");
+    cleanupSuffix("sMarkSuffix");
+}
+
+static void RunFirstLaunchSetup()
+{
+    bool mcm = IsMcmInstalled();
+    REX::INFO("UnreadNotes: MCM {}; running {} branch",
+              mcm ? "detected" : "not detected",
+              mcm ? "migration" : "seeding");
+
+    if (mcm)
+        MaybeMigrateLegacyToMcm();
+    else
+        EnsureLegacyIniExists();
+
+    CleanupOrphanedKeys();
+}
+
 
 static void LoadConfig()
 {
-    const char* iniPath = GetIniPath();
-
-    DWORD attrs = GetFileAttributesA(iniPath);
-    if (attrs == INVALID_FILE_ATTRIBUTES)
-        CreateDefaultConfig(iniPath);
-
     int prevLogLevel = g_cfgLogLevel;
-    g_cfgLogLevel = static_cast<int>(GetPrivateProfileIntA("Display", "iLogLevel", 1, iniPath));
-    if (g_cfgLogLevel < 0) g_cfgLogLevel = 0;
-    if (g_cfgLogLevel > 2) g_cfgLogLevel = 2;
+    int logLevel;
+    const char* logLevelPath = ReadConfigInt("Debug", "iLogLevel", 1, logLevel);
+    if (logLevel < 0) logLevel = 0;
+    if (logLevel > 2) logLevel = 2;
+    g_cfgLogLevel = logLevel;
 
     if (prevLogLevel != g_cfgLogLevel && prevLogLevel != 1)  // Don't log on first load (default=1)
         REX::INFO("UnreadNotes: Log level changed to {}", g_cfgLogLevel);
 
-    int rawBrightness = static_cast<int>(GetPrivateProfileIntA("Display", "iReadBrightness", 50, iniPath));
+    int rawBrightness;
+    const char* brightnessPath = ReadConfigInt("Display", "iReadBrightness", 50, rawBrightness);
     if (rawBrightness < 0 || rawBrightness > 100)
     {
         REX::WARN("UnreadNotes: WARNING — iReadBrightness={} out of range (0-100), clamping",
@@ -206,32 +579,59 @@ static void LoadConfig()
     g_cfgBrightness = static_cast<float>(rawBrightness) / 100.0f;
 
     char suffixBuf[64] = {};
-    GetPrivateProfileStringA("Display", "sSuffix", " (Read)", suffixBuf, sizeof(suffixBuf), iniPath);
+    const char* suffixPath = ReadConfigString("Display", "sSuffix", "(Read)", suffixBuf, sizeof(suffixBuf));
     {
         char sanitised[64] = {};
         SanitiseSuffix(suffixBuf, sanitised, sizeof(sanitised), "sSuffix");
         strncpy_s(g_cfgSuffix, sanitised, sizeof(g_cfgSuffix) - 1);
+        NormaliseSuffix(g_cfgSuffix, sizeof(g_cfgSuffix));
     }
 
     char markSuffixBuf[64] = {};
-    GetPrivateProfileStringA("Display", "sMarkSuffix", " (*)", markSuffixBuf, sizeof(markSuffixBuf), iniPath);
+    const char* markSuffixPath = ReadConfigString("Display", "sMarkSuffix", "(*)", markSuffixBuf, sizeof(markSuffixBuf));
     {
         char sanitised[64] = {};
         SanitiseSuffix(markSuffixBuf, sanitised, sizeof(sanitised), "sMarkSuffix");
         strncpy_s(g_cfgMarkSuffix, sanitised, sizeof(g_cfgMarkSuffix) - 1);
+        NormaliseSuffix(g_cfgMarkSuffix, sizeof(g_cfgMarkSuffix));
     }
 
-    auto loadKey = [iniPath](const char* name, std::uint32_t& out) {
-        std::uint32_t v = static_cast<std::uint32_t>(GetPrivateProfileIntA("Input", name, 0, iniPath));
+    // Hotkey keys: canonical names are sToggleKey / sMarkKey (s* prefix to
+    // satisfy MCM's textinput-with-ModSettingString convention). Legacy i*
+    // names act as an alias so v1.3.0-era F4SE-Plugins INIs still work for
+    // non-MCM users without migration. Probe order matters:
+    //   1. s* in user-override files (MCM-Settings, F4SE-Plugins) — user
+    //      explicitly set the canonical name
+    //   2. i* in user-override files — user set the legacy name; honour it
+    //   3. s* via the full chain (will hit defaults' sName=0) — nothing
+    //      user-set anywhere, use the shipped default
+    // Skipping defaults at step 1 is what makes step 2 reachable; otherwise
+    // defaults' `sToggleKey=0` would shadow a user's `iToggleKey=220`.
+    auto loadKey = [](const char* sName, const char* iName, std::uint32_t& out) -> const char* {
+        int rawValue = 0;
+        const char* path = ReadUserConfigInt("Input", sName, rawValue);
+        const char* found = sName;
+        if (!path)
+        {
+            path = ReadUserConfigInt("Input", iName, rawValue);
+            found = iName;
+        }
+        if (!path)
+        {
+            path = ReadConfigInt("Input", sName, 0, rawValue);
+            found = sName;
+        }
+        std::uint32_t v = (rawValue >= 0) ? static_cast<std::uint32_t>(rawValue) : 0u;
         if (v > 255)
         {
-            REX::WARN("UnreadNotes: WARNING — {}={} out of keyboard range, disabling", name, v);
+            REX::WARN("UnreadNotes: WARNING — {}={} out of keyboard range, disabling", found, v);
             v = 0;
         }
         out = v;
+        return path;
     };
-    loadKey("iToggleKey", g_cfgToggleKey);
-    loadKey("iMarkKey",   g_cfgMarkKey);
+    const char* togglePath  = loadKey("sToggleKey", "iToggleKey", g_cfgToggleKey);
+    const char* markKeyPath = loadKey("sMarkKey",   "iMarkKey",   g_cfgMarkKey);
 
     // Reject misconfiguration: both keys set to the same value means the mark
     // branch in OnButtonEvent is unreachable.
@@ -258,18 +658,36 @@ static void LoadConfig()
         static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgMarkSuffix, g_cfgLogLevel,
         toggleStr, markStr);
 
-    // Debug commands — triggered via INI, auto-reset after use
-    if (GetPrivateProfileIntA("Debug", "bResetAll", 0, iniPath) != 0)
+    REX::INFO("UnreadNotes: Sources — iLogLevel={} iReadBrightness={} sSuffix={} sMarkSuffix={} sToggleKey={} sMarkKey={}",
+        ConfigSourceLabel(logLevelPath),
+        ConfigSourceLabel(brightnessPath),
+        ConfigSourceLabel(suffixPath),
+        ConfigSourceLabel(markSuffixPath),
+        ConfigSourceLabel(togglePath),
+        ConfigSourceLabel(markKeyPath));
+
+    // Debug commands — triggered via INI, auto-reset after use. Reset writes
+    // back to the path where the trigger value was found (so the trigger
+    // state is correctly cleared regardless of which file the user used).
+    // Never write to the defaults path — it's the shipped reference and gets
+    // overwritten on each mod update.
+    int resetAll;
+    const char* resetPath = ReadConfigInt("Debug", "bResetAll", 0, resetAll);
+    if (resetAll != 0)
     {
         REX::INFO("UnreadNotes: DEBUG — Clearing all {} read notes", g_readNotes.size());
         g_readNotes.clear();
-        WritePrivateProfileStringA("Debug", "bResetAll", "0", iniPath);
+        if (resetPath && std::strcmp(resetPath, GetMcmDefaultsPath()) != 0)
+            WritePrivateProfileStringA("Debug", "bResetAll", "0", resetPath);
     }
 
-    if (GetPrivateProfileIntA("Debug", "bMarkAllRead", 0, iniPath) != 0)
+    int markAll;
+    const char* markPath = ReadConfigInt("Debug", "bMarkAllRead", 0, markAll);
+    if (markAll != 0)
     {
         REX::INFO("UnreadNotes: DEBUG — bMarkAllRead requested");
-        WritePrivateProfileStringA("Debug", "bMarkAllRead", "0", iniPath);
+        if (markPath && std::strcmp(markPath, GetMcmDefaultsPath()) != 0)
+            WritePrivateProfileStringA("Debug", "bMarkAllRead", "0", markPath);
         g_markAllReadPending = true;
     }
 }
@@ -1134,6 +1552,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
     const char* tier = REL::Module::IsRuntimeOG() ? "OG" : REL::Module::IsRuntimeNG() ? "NG" : "AE";
     REX::INFO("UnreadNotes: detected runtime {} ({})", version, tier);
 
+    RunFirstLaunchSetup();
     LoadConfig();
 
     // --- Scaleform ---

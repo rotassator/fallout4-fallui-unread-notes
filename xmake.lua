@@ -108,12 +108,28 @@ target("UnreadNotes")
         os.cp(dll, dist)
         cprint("${green}[deploy]${clear} %s", dist)
 
+        -- Source tree for the MCM config files (defaults INI now, menu JSON
+        -- once authored). The dist/ tree is Data/-relative, mirroring mod
+        -- manager staging convention.
+        local mcmConfigSrc = path.join(os.projectdir(), "dist", "MCM", "Config", "UnreadNotes")
+
         for _, t in ipairs(TEST_TARGETS) do
             if os.isdir(t.root) then
+                -- DLL
                 os.mkdir(t.plugins)  -- idempotent; creates F4SE/Plugins on first build
                 local dest = path.join(t.plugins, path.filename(dll))
                 os.cp(dll, dest)
                 cprint("${green}[deploy]${clear} %s", dest)
+
+                -- MCM config tree. t.plugins ends in F4SE/Plugins, so going
+                -- up two levels gives the mod root; mod managers stage at
+                -- <modRoot>/MCM/Config/UnreadNotes/ (no Data/ prefix — they
+                -- add it during deployment to the game).
+                local modRoot = path.directory(path.directory(t.plugins))
+                local mcmConfigDest = path.join(modRoot, "MCM", "Config", "UnreadNotes")
+                os.mkdir(mcmConfigDest)
+                os.cp(path.join(mcmConfigSrc, "*"), mcmConfigDest)
+                cprint("${green}[deploy]${clear} %s/", mcmConfigDest)
             else
                 cprint("${yellow}[deploy]${clear} skipped %s copy (root not found): %s", t.label, t.root)
             end
