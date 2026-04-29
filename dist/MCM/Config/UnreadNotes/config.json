@@ -1,0 +1,122 @@
+{
+    "modName": "UnreadNotes",
+    "displayName": "Unread Notes",
+    "minMcmVersion": 1,
+    "pluginRequirements": [],
+    "content": [
+        {
+            "text": "<font size='30'><p align='center'>Unread Notes</p></font>",
+            "type": "text",
+            "html": true
+        },
+        {
+            "text": "Tracks read/unread status for notes and holotapes in the Pip-Boy. Read items are dimmed (with FallUI) and labelled with a configurable suffix.",
+            "type": "text"
+        },
+        {
+            "type": "spacer"
+        },
+        {
+            "type": "section",
+            "text": "Display"
+        },
+        {
+            "id": "iReadBrightness:Display",
+            "text": "Read item brightness (%)",
+            "type": "slider",
+            "valueOptions": {
+                "sourceType": "ModSettingInt",
+                "min": 0,
+                "max": 100,
+                "step": 5
+            },
+            "help": "Brightness of read items. 100 = full bright (no change), 50 = half (default), 0 = invisible. Requires FallUI."
+        },
+        {
+            "id": "sSuffix:Display",
+            "text": "Read suffix",
+            "type": "textinput",
+            "valueOptions": {
+                "sourceType": "ModSettingString"
+            },
+            "help": "Appended to read item names. A space is added automatically. Default: (Read). Blank = no suffix. ASCII only."
+        },
+        {
+            "id": "sMarkSuffix:Display",
+            "text": "Mark suffix",
+            "type": "textinput",
+            "valueOptions": {
+                "sourceType": "ModSettingString"
+            },
+            "help": "Appended to MARKED item names. Same rules as the read suffix. Default: (*)."
+        },
+        {
+            "type": "spacer"
+        },
+        {
+            "type": "section",
+            "text": "Input"
+        },
+        {
+            "type": "text",
+            "text": "Hotkeys are entered as DirectX scan codes (decimal). 0 = disabled. Reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes — common picks: 189 (-), 187 (=), 220 (\\)."
+        },
+        {
+            "id": "sToggleKey:Input",
+            "text": "Toggle hotkey (scan code)",
+            "type": "textinput",
+            "valueOptions": {
+                "sourceType": "ModSettingString"
+            },
+            "help": "Toggles read/unread on the currently-selected Pip-Boy item. 0 = disabled."
+        },
+        {
+            "id": "sMarkKey:Input",
+            "text": "Mark hotkey (scan code)",
+            "type": "textinput",
+            "valueOptions": {
+                "sourceType": "ModSettingString"
+            },
+            "help": "Toggles mark/unmark on the selected item. Marked items stay bright and skip auto-mark-as-read. 0 = disabled."
+        },
+        {
+            "type": "spacer"
+        },
+        {
+            "type": "section",
+            "text": "Debug"
+        },
+        {
+            "id": "iLogLevel:Debug",
+            "text": "Logging level",
+            "type": "stepper",
+            "valueOptions": {
+                "sourceType": "ModSettingInt",
+                "options": [
+                    "Minimal",
+                    "Normal",
+                    "Debug"
+                ]
+            },
+            "help": "Verbosity of UnreadNotes.log output. Debug includes per-frame perf stats."
+        },
+        {
+            "id": "bResetAll:Debug",
+            "text": "Clear all read/marked state",
+            "type": "switcher",
+            "valueOptions": {
+                "sourceType": "ModSettingBool"
+            },
+            "help": "Toggle ON and open the Pip-Boy to wipe all read/marked tracking. Auto-resets to OFF after running."
+        },
+        {
+            "id": "bMarkAllRead:Debug",
+            "text": "Mark all visible items read",
+            "type": "switcher",
+            "valueOptions": {
+                "sourceType": "ModSettingBool"
+            },
+            "help": "Toggle ON and open the Pip-Boy to mark every currently-visible note/holotape as read. Auto-resets to OFF after running."
+        }
+    ]
+}
