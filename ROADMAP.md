@@ -32,9 +32,31 @@
 
 ## Features — Near Term
 
-### Next release (v1.4.0): config-UX overhaul
-- [ ] **MCM integration** — promoted from Ideas to v1.4.0 as a focused config-UX release. With config surface at 11+ options and growing, in-game discoverability has crossed from nice-to-have into worth-shipping. **Implementation strategy:** MCM as an optional UI layer over our existing INI, not a replacement. Our INI stays authoritative; `Data/MCM/Config/UnreadNotes/config.json` describes the menu and points MCM's backing-store mechanism at our INI. MCM writes user changes directly to our INI, the existing hot-reload-on-Pip-Boy-open path picks them up. Users without MCM continue editing the INI by hand — MCM stays *recommended-not-required*, mirroring the FallUI dependency tier. **Why this release in isolation:** clean blast radius for testing (any v1.4.0 regression is by definition in MCM integration, not bundled feature work), and v1.5.0+ feature releases inherit MCM coverage automatically by adding entries to `config.json` alongside any new INI keys. **Recon needed:** verify MCM's exact mechanism for targeting an arbitrary INI as the backing store (the `sourceFile` key or equivalent), and how existing INI values surface in MCM at first launch.
-- [ ] **INI auto-merge for new keys** — current `LoadConfig` only creates the INI on first run (`src/main.cpp:186-188`) and never updates existing files when releases add options. `GetPrivateProfileIntA`/`StringA` per-call defaults make the DLL behave correctly at runtime, but the on-disk INI stays incomplete, forcing changelog-spelunking or full INI deletion to discover new options. Fix: on load, scan the existing INI against the expected key set and append missing keys with their comment headers — or use an `iConfigVersion` key with full regeneration that preserves user values for keys still present (also handles renames/removals cleanly). Standalone-valuable for text-editor users even without MCM, since MCM users get discoverability via the menu rather than the file. Pairs naturally with MCM in this release: between them, both classes of user get a discoverability fix.
+### Next release (v1.4.0): MCM migration
+
+Post-recon design. MCM uses a two-layer INI scheme — defaults at `Data/MCM/Config/<Mod>/settings.ini` (shipped, refreshed each release), user overrides at `Data/MCM/Settings/<Mod>.ini` (MCM-written or hand-edited). This collapses the originally-planned "MCM integration" + "INI auto-merge" into a single architectural change: the two-layer scheme inherently solves the new-keys-don't-appear-in-existing-INI problem because defaults live in a separately-shipped file that gets refreshed each update without touching user values.
+
+**Architecture.** DLL reads with a deterministic fallback chain:
+1. `Data/MCM/Settings/UnreadNotes.ini` — user overrides (MCM-managed or hand-edited)
+2. `Data/F4SE/Plugins/UnreadNotes.ini` — legacy / non-MCM users
+3. `Data/MCM/Config/UnreadNotes/settings.ini` — defaults (shipped)
+4. Hardcoded fallback constants
+
+The DLL is file-based and indifferent to MCM's presence; MCM detection only matters for the one-time migration trigger.
+
+**Migration + tombstone.** On first v1.4.0 load, if `Data/MCM/Config/MCM/` exists (MCM detected) AND `Data/MCM/Settings/UnreadNotes.ini` does not exist AND `Data/F4SE/Plugins/UnreadNotes.ini` exists with user values, copy values to the MCM Settings path. **Prepend** a state-agnostic tombstone to the legacy INI explaining the new location and shadow precedence — do **not** strip original values. Preserves downgrade safety (v1.3.0 still reads the legacy file), survives MCM uninstall (DLL reads MCM Settings INI regardless of MCM-the-mod's state), and handles late-MCM-install (trigger is idempotent — runs once when conditions are first met).
+
+**Deliverables (implementation order):**
+
+- [ ] Author shipped defaults INI at `Data/MCM/Config/UnreadNotes/settings.ini`. Content moved verbatim from the current `CreateDefaultConfig` string, with a header documenting the two-layer scheme for non-MCM users (mirroring FallUI's defaults-INI header pattern).
+- [ ] Update `LoadConfig` (`src/main.cpp:182+`) to use the fallback chain. Remove `CreateDefaultConfig` since defaults now ship as a real file.
+- [ ] Implement migration trigger + tombstone prepend. Idempotent — guard with the three conditions above.
+- [ ] Author `Data/MCM/Config/UnreadNotes/config.json`. Menu mirrors the current INI sections (`Display`, `Input`, `Debug`). `pluginRequirements: []` per the Upscaling reference. Verify text-input widget support (for `sSuffix`/`sMarkSuffix`) and key-bind widget support (for `iToggleKey`/`iMarkKey`) during this step; document workarounds if unsupported.
+- [ ] Update `xmake.lua` to deploy the new files into the mod archive's `Data/MCM/Config/UnreadNotes/` path.
+- [ ] Verification matrix — walk the five user cases (new + MCM, new no-MCM, existing + MCM, existing no-MCM, MCM-disabled post-migration). Each must read settings correctly per the fallback chain.
+- [ ] Documentation: README, Nexus description, CHANGELOG. Frame as "config UX, no gameplay changes."
+
+**Out of scope.** Any gameplay/feature changes. Clean blast radius for testing — any regression is by definition in this migration, not bundled feature work. v1.5.0+ feature releases inherit MCM coverage by adding entries alongside any new INI keys.
 
 ### From v1.0 user feedback (Nexus)
 - [x] ~~**Read/unread toggle on keypress**~~ — DONE. Configurable scan code under `[Input]`, commented out by default. FallUI's menu dispatch uses Windows VK codes; values match UESP's table directly (no DIK conversion needed). Widened the visual/markable filter to include misc items (0x200) so anything toggled gets the suffix and dim.
