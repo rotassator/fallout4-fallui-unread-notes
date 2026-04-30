@@ -1514,6 +1514,20 @@ public:
             LOG(1, "UnreadNotes: PipboyMenu closed — cached pointer cleared");
         }
 
+        // Hot-reload config when the user returns to Pip-Boy from the system
+        // menu (which hosts MCM). Without this, MCM changes made via the
+        // system menu while Pip-Boy is open don't apply until Pip-Boy closes
+        // and reopens. MCM appears to render within PauseMenu rather than as
+        // a separate menu — closing PauseMenu is the canonical "user finished
+        // tweaking settings" moment. Gated on Pip-Boy still being open.
+        if (!evn.opening &&
+            evn.menuName == "PauseMenu" &&
+            g_lastPipboyMenu != nullptr)
+        {
+            LoadConfig();
+            LOG(1, "UnreadNotes: PauseMenu closed — config reloaded");
+        }
+
         return RE::BSEventNotifyControl::kContinue;
     }
 };
