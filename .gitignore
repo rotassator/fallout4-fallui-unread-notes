@@ -33,5 +33,8 @@ addon/
 nexus-*.txt
 
 # The DLL in dist/ is tracked — it's the distributable binary.
-# Rebuilding updates it automatically via CMake post-build step.
-# The INI in dist/ is a reference copy — actual INI is auto-created at runtime.
+# Rebuilding updates it automatically via the xmake post-build step.
+# Config files in dist/MCM/Config/UnreadNotes/ are tracked — they ship
+# with the mod (defaults INI + MCM menu definition). The dist/ tree is
+# Data/-relative (mirrors mod manager staging convention), so the deploy
+# layout is dist/MCM/... → game's Data/MCM/...
