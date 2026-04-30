@@ -1,0 +1,21 @@
+{
+    "modName": "UnreadNotes",
+    "keybinds": [
+        {
+            "id": "UnreadNotes_toggle",
+            "desc": "Toggle the read/unread status of the selected Pip-Boy item",
+            "action": {
+                "type": "RunConsoleCommand",
+                "command": ""
+            }
+        },
+        {
+            "id": "UnreadNotes_mark",
+            "desc": "Toggle the marked status of the selected Pip-Boy item (marked items stay bright and skip auto-mark-as-read)",
+            "action": {
+                "type": "RunConsoleCommand",
+                "command": ""
+            }
+        }
+    ]
+}

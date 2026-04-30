@@ -59,25 +59,20 @@
         },
         {
             "type": "text",
-            "text": "Hotkeys are entered as DirectX scan codes (decimal). 0 = disabled. Reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes — common picks: 189 (-), 187 (=), 220 (\\)."
+            "html": true,
+            "text": "Click a row to bind. Modifiers (Shift/Ctrl/Alt) supported. Tab to clear.<br/><font color='#ffaa44'>Note:</font> FallUI ignores modifiers on its own hotkeys (X, F, etc.) — those will fire both actions."
         },
         {
-            "id": "sToggleKey:Input",
-            "text": "Toggle hotkey (scan code)",
-            "type": "textinput",
-            "valueOptions": {
-                "sourceType": "ModSettingString"
-            },
-            "help": "Toggles read/unread on the currently-selected Pip-Boy item. 0 = disabled."
+            "id": "UnreadNotes_toggle",
+            "text": "Toggle read hotkey",
+            "type": "hotkey",
+            "help": "Toggles read/unread on the currently-selected Pip-Boy item."
         },
         {
-            "id": "sMarkKey:Input",
-            "text": "Mark hotkey (scan code)",
-            "type": "textinput",
-            "valueOptions": {
-                "sourceType": "ModSettingString"
-            },
-            "help": "Toggles mark/unmark on the selected item. Marked items stay bright and skip auto-mark-as-read. 0 = disabled."
+            "id": "UnreadNotes_mark",
+            "text": "Mark item hotkey",
+            "type": "hotkey",
+            "help": "Toggles mark/unmark on the selected item. Marked items stay bright and skip auto-mark-as-read."
         },
         {
             "type": "spacer"

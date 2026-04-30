@@ -5,6 +5,9 @@
 
 #include "pch.h"
 
+#include <fstream>
+#include <nlohmann/json.hpp>
+
 namespace GFx = Scaleform::GFx;
 
 // Type-aware numeric coercion. CommonLibF4's Value::GetNumber() reads
@@ -52,17 +55,32 @@ static int           g_cfgLogLevel = 1;
 static float         g_cfgBrightness = 0.5f;
 static char          g_cfgSuffix[64] = " (Read)";
 static char          g_cfgMarkSuffix[64] = " (*)";
-static std::uint32_t g_cfgToggleKey = 0;    // VK code (per UESP's "DirectX Scan Codes" page); 0 = disabled
-static std::uint32_t g_cfgMarkKey = 0;      // VK code for mark toggle; 0 = disabled
+static std::uint32_t g_cfgToggleKey  = 0;   // VK code (per UESP's "DirectX Scan Codes" page); 0 = disabled
+static std::uint32_t g_cfgToggleMods = 0;   // bitfield: kModShift | kModCtrl | kModAlt
+static std::uint32_t g_cfgMarkKey    = 0;
+static std::uint32_t g_cfgMarkMods   = 0;
+
+// Modifier bit values match MCM's Keybinds.json convention (verified by
+// binding Shift/Ctrl/Alt + key in MCM and inspecting the resulting modifiers
+// integer). Note: this is NOT Windows' MOD_* convention — MCM uses its own.
+// MCM accepts Win as a modifier too, but pressing Win triggers OS-level
+// shortcuts and the in-game key event is unreliable, so we reject any bit
+// outside this mask at read time.
+static constexpr std::uint32_t kModShift = 0x1;
+static constexpr std::uint32_t kModCtrl  = 0x2;
+static constexpr std::uint32_t kModAlt   = 0x4;
+static constexpr std::uint32_t kModMask  = kModShift | kModCtrl | kModAlt;
 static bool          g_markAllReadPending = false;
 
 // Log macro: only logs if current level >= required level
 // 0 = minimal (errors, startup, config), 1 = normal, 2 = debug (perf, per-item)
 #define LOG(level, ...) do { if (g_cfgLogLevel >= (level)) REX::INFO(__VA_ARGS__); } while(0)
 
-// Format "N (KEYNAME)" for a VK code, or "0 (disabled)" when disabled.
-// Writes into the provided buffer. Used in the startup config log.
-static void FormatKeyForLog(std::uint32_t vkCode, char* out, std::size_t outSize)
+// Format "N (Ctrl+Shift+KEYNAME)" for a VK code + modifier mask, or
+// "0 (disabled)" when disabled. Writes into the provided buffer.
+// Used in the startup config log.
+static void FormatKeyForLog(std::uint32_t vkCode, std::uint32_t mods,
+                            char* out, std::size_t outSize)
 {
     if (vkCode == 0)
     {
@@ -70,11 +88,17 @@ static void FormatKeyForLog(std::uint32_t vkCode, char* out, std::size_t outSize
         return;
     }
 
+    char modBuf[32] = "";
+    if (mods & kModCtrl)  strcat_s(modBuf, sizeof(modBuf), "Ctrl+");
+    if (mods & kModShift) strcat_s(modBuf, sizeof(modBuf), "Shift+");
+    if (mods & kModAlt)   strcat_s(modBuf, sizeof(modBuf), "Alt+");
+
     char keyName[32] = {};
     UINT scanCode = MapVirtualKeyA(vkCode, MAPVK_VK_TO_VSC);
     if (scanCode != 0)
         GetKeyNameTextA(static_cast<LONG>(scanCode) << 16, keyName, sizeof(keyName));
-    std::snprintf(out, outSize, "%u (%s)", vkCode, keyName[0] ? keyName : "unknown");
+    std::snprintf(out, outSize, "%u (%s%s)", vkCode, modBuf,
+                  keyName[0] ? keyName : "unknown");
 }
 
 // Sanitise a suffix value by stripping `<` and `>`, which break FallUI's
@@ -165,6 +189,15 @@ static const char* GetLegacyIniPath()
 static const char* GetMcmDefaultsPath()
 {
     static std::string s = (GetGameRoot() / "Data/MCM/Config/UnreadNotes/settings.ini").make_preferred().string();
+    return s.c_str();
+}
+
+// MCM's global keybind registry. One file holds bindings for all mods that
+// declare hotkey widgets; entries are filtered by modName at read time.
+// Written by MCM when the user binds a key in the in-game key picker.
+static const char* GetMcmKeybindsPath()
+{
+    static std::string s = (GetGameRoot() / "Data/MCM/Settings/Keybinds.json").make_preferred().string();
     return s.c_str();
 }
 
@@ -263,31 +296,92 @@ static const char* ReadConfigString(const char* section, const char* key,
     return nullptr;
 }
 
-// Read an int from user-override files only — skips the shipped defaults.
-// Used when a key has a legacy alias (e.g. iToggleKey → sToggleKey): we want
-// "user explicitly set the override under either name" to win over "default
-// from the shipped file." Without this distinction, defaults' `sToggleKey=0`
-// would shadow a v1.3.0 non-MCM user's `iToggleKey=220` in F4SE-Plugins.
-static const char* ReadUserConfigInt(const char* section, const char* key, int& out)
+// Read a hotkey from MCM's global Keybinds.json. Returns the path on
+// success, nullptr if the file is absent, malformed, or doesn't contain a
+// matching entry. Defensively wrapped: nlohmann/json's parse and accessors
+// throw on type mismatch and we can't trust the file shape — it's written
+// by MCM but a corrupt save / hand-edit / future schema bump could leave it
+// in any state. All exceptions are caught and logged; the caller falls
+// through to the INI precedence chain on failure.
+static const char* ReadMcmHotkey(const char* keybindId,
+                                 std::uint32_t& outKey,
+                                 std::uint32_t& outMods)
 {
-    constexpr int kSentinel = INT_MIN;
-    const char* paths[] = {
-        GetMcmSettingsPath(),
-        GetLegacyIniPath(),
-    };
-    for (const char* path : paths)
+    const char* path = GetMcmKeybindsPath();
+    if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) return nullptr;
+
+    try
     {
-        if (GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES)
-            continue;
-        int v = GetPrivateProfileIntA(section, key, kSentinel, path);
-        if (v != kSentinel)
+        std::ifstream f(path);
+        if (!f.is_open()) return nullptr;
+
+        auto j = nlohmann::json::parse(f);
+        if (!j.is_object() || !j.contains("keybinds") || !j["keybinds"].is_array())
+            return nullptr;
+
+        for (const auto& kb : j["keybinds"])
         {
-            out = v;
+            if (!kb.is_object()) continue;
+
+            // Filter by both modName and id. MCM uses globally-unique ids
+            // (mod-prefixed by convention), so id alone would suffice — but
+            // matching modName too is cheap and lets us diagnose collisions.
+            const auto modName = kb.value("modName", std::string{});
+            const auto id      = kb.value("id",      std::string{});
+            if (modName != "UnreadNotes" || id != keybindId) continue;
+
+            const int keycode   = kb.value("keycode", -1);
+            const int modifiers = kb.value("modifiers", 0);
+
+            if (keycode < 0 || keycode > 255)
+            {
+                REX::WARN("UnreadNotes: WARNING — Keybinds.json {} has out-of-range keycode={}, ignoring",
+                          keybindId, keycode);
+                return nullptr;
+            }
+
+            REX::INFO("UnreadNotes: MCM-Keybinds {} -> keycode={} modifiers={}",
+                      keybindId, keycode, modifiers);
+
+            // Reject any modifier bit we don't recognize (Win, Hyper, future
+            // additions). Better to ignore the binding with a clear warning
+            // than to silently match the wrong combination because we masked
+            // off bits the user actually wanted.
+            if ((modifiers & ~static_cast<int>(kModMask)) != 0)
+            {
+                REX::WARN("UnreadNotes: WARNING — {} has unsupported modifier bits "
+                          "(modifiers={}, recognized={}); binding ignored. "
+                          "Re-bind using only Shift/Ctrl/Alt.",
+                          keybindId, modifiers, static_cast<int>(kModMask));
+                return nullptr;
+            }
+
+            outKey  = static_cast<std::uint32_t>(keycode);
+            outMods = static_cast<std::uint32_t>(modifiers) & kModMask;
             return path;
         }
+
+        // File exists and parses, but no entry for our id. User cleared the
+        // binding in MCM (or never set it). Log explicitly so the diagnostic
+        // story is complete — otherwise a clear-and-restart produces a
+        // silent gap in the log.
+        REX::INFO("UnreadNotes: MCM-Keybinds {} -> not bound", keybindId);
+    }
+    catch (const nlohmann::json::exception& e)
+    {
+        REX::WARN("UnreadNotes: WARNING — failed to parse {}: {}", path, e.what());
+    }
+    catch (const std::exception& e)
+    {
+        REX::WARN("UnreadNotes: WARNING — error reading {}: {}", path, e.what());
     }
     return nullptr;
 }
+
+// Sentinel for "MCM is installed and the binding is intentionally absent" —
+// distinguishes from "no source matched, falling back to defaults." Pointer
+// identity is what ConfigSourceLabel checks; the string is just for grep.
+static const char kMcmUnboundSentinel[] = "<MCM-Unbound>";
 
 // Short label for a config source path. Used by LoadConfig's source summary
 // log line so a single glance at the F4SE log shows where each setting
@@ -296,7 +390,9 @@ static const char* ReadUserConfigInt(const char* section, const char* key, int& 
 // canonical user-editable file for non-MCM users.
 static const char* ConfigSourceLabel(const char* path)
 {
-    if (!path) return "default";
+    if (path == kMcmUnboundSentinel) return "MCM-Unbound";
+    if (!path) return "Defaults";  // no path matched anywhere — same effect
+    if (std::strcmp(path, GetMcmKeybindsPath()) == 0) return "MCM-Keybinds";
     if (std::strcmp(path, GetMcmSettingsPath()) == 0) return "MCM-Settings";
     if (std::strcmp(path, GetLegacyIniPath())  == 0) return "F4SE-Plugins";
     if (std::strcmp(path, GetMcmDefaultsPath()) == 0) return "Defaults";
@@ -317,6 +413,8 @@ static const char* ConfigSourceLabel(const char* path)
 // against just-seeded defaults on the second launch. With MCM not installed,
 // the legacy file is the canonical user-editable override file and seeding
 // it with defaults is the friendly thing to do.
+
+static void MigrateLegacyHotkeysToKeybinds();  // defined just below
 
 static void MaybeMigrateLegacyToMcm()
 {
@@ -370,6 +468,13 @@ static void MaybeMigrateLegacyToMcm()
             std::string value(eq + 1);
             std::string destSection = section;
 
+            // Hotkeys belong in Data/MCM/Settings/Keybinds.json now, not in
+            // MCM-Settings INI — MigrateLegacyHotkeysToKeybinds (called below)
+            // handles them. Skip here so they don't pollute MCM-Settings as
+            // dead weight.
+            if (key == "iToggleKey" || key == "iMarkKey")
+                continue;
+
             // v1.4.0 normalisation — see CleanupOrphanedKeys for the
             // idempotent post-migration cleanup that handles already-
             // migrated users with the pre-1.4.0 layout.
@@ -378,15 +483,6 @@ static void MaybeMigrateLegacyToMcm()
                 // Section moved [Display] -> [Debug]: it's a debug knob, not a
                 // display knob.
                 destSection = "Debug";
-            }
-            else if (key == "iToggleKey")
-            {
-                // Renamed for the textinput + ModSettingString convention.
-                key = "sToggleKey";
-            }
-            else if (key == "iMarkKey")
-            {
-                key = "sMarkKey";
             }
             else if (key == "sSuffix" || key == "sMarkSuffix")
             {
@@ -409,6 +505,10 @@ static void MaybeMigrateLegacyToMcm()
 
     REX::INFO("UnreadNotes: migrated {} config values from {} to {}",
               copiedKeys, legacy, mcmSettings);
+
+    // Hotkeys live in Keybinds.json now, not MCM-Settings — handle them
+    // separately so the user's v1.3.0 bindings show up in the MCM picker.
+    MigrateLegacyHotkeysToKeybinds();
 
     // Prepend tombstone to the legacy file. Idempotent — if our marker is
     // already present (e.g. user deleted MCM Settings post-migration and we
@@ -477,6 +577,120 @@ static void MaybeMigrateLegacyToMcm()
     REX::INFO("UnreadNotes: prepended migration tombstone to {}", legacy);
 }
 
+// Carry v1.3.0 hotkeys from F4SE-Plugins INI into MCM's global Keybinds.json.
+// Without this, an upgrading user who installs MCM would see "no key bound"
+// in the picker even though their iToggleKey/iMarkKey is still active via the
+// F4SE-Plugins fallback in loadKey. Re-binding via the picker would then
+// silently win over the carried-over INI value.
+//
+// Idempotent: if the file already contains an entry with our id, skip it.
+// Other mods' entries (e.g. CompanionTakeAll's two bindings) are preserved.
+// All file I/O and JSON access is wrapped in try/catch — a corrupt or hand-
+// edited Keybinds.json must not take the plugin down. On parse failure we
+// rebuild from a known-good empty structure rather than overwriting blindly,
+// but we WILL clobber unreadable JSON if we already know we have something to
+// write. (No shipped mod we know of writes anything we'd want to preserve in
+// a state that doesn't parse.)
+static void MigrateLegacyHotkeysToKeybinds()
+{
+    const char* legacy = GetLegacyIniPath();
+    if (GetFileAttributesA(legacy) == INVALID_FILE_ATTRIBUTES) return;
+
+    constexpr int kSentinel = INT_MIN;
+    auto readKey = [&](const char* iniName) -> int {
+        int v = GetPrivateProfileIntA("Input", iniName, kSentinel, legacy);
+        if (v == kSentinel || v <= 0 || v > 255) return 0;
+        return v;
+    };
+
+    const int toggleKey = readKey("iToggleKey");
+    const int markKey   = readKey("iMarkKey");
+
+    if (toggleKey == 0 && markKey == 0)
+    {
+        REX::INFO("UnreadNotes: hotkey migration skipped — no v1.3.0 hotkeys set in {}", legacy);
+        return;
+    }
+
+    const char* keybindsPath = GetMcmKeybindsPath();
+    nlohmann::json j;
+    bool hadValidExisting = false;
+
+    try
+    {
+        if (GetFileAttributesA(keybindsPath) != INVALID_FILE_ATTRIBUTES)
+        {
+            std::ifstream f(keybindsPath);
+            if (f.is_open())
+            {
+                j = nlohmann::json::parse(f);
+                if (j.is_object() && j.contains("keybinds") && j["keybinds"].is_array())
+                    hadValidExisting = true;
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        REX::WARN("UnreadNotes: hotkey migration — couldn't parse existing {} ({}); will rewrite",
+                  keybindsPath, e.what());
+    }
+
+    if (!hadValidExisting)
+        j = nlohmann::json{ {"keybinds", nlohmann::json::array()}, {"version", 1} };
+
+    auto& arr = j["keybinds"];
+
+    auto hasEntry = [&](const std::string& id) {
+        for (const auto& kb : arr)
+            if (kb.is_object() && kb.value("id", std::string{}) == id) return true;
+        return false;
+    };
+
+    auto addEntry = [&](const char* id, int keycode) -> bool {
+        if (keycode <= 0 || keycode > 255) return false;
+        if (hasEntry(id)) return false;
+        arr.push_back({
+            {"id",        id},
+            {"modName",   "UnreadNotes"},
+            {"keycode",   keycode},
+            {"modifiers", 0},
+        });
+        return true;
+    };
+
+    int added = 0;
+    if (addEntry("UnreadNotes_toggle", toggleKey)) ++added;
+    if (addEntry("UnreadNotes_mark",   markKey))   ++added;
+
+    if (added == 0)
+    {
+        REX::INFO("UnreadNotes: hotkey migration — no new entries needed (already present in {})", keybindsPath);
+        return;
+    }
+
+    if (!j.contains("version") || !j["version"].is_number_integer())
+        j["version"] = 1;
+
+    try
+    {
+        std::ofstream out(keybindsPath, std::ios::binary | std::ios::trunc);
+        if (!out.is_open())
+        {
+            REX::WARN("UnreadNotes: hotkey migration — couldn't open {} for write", keybindsPath);
+            return;
+        }
+        out << j.dump();
+    }
+    catch (const std::exception& e)
+    {
+        REX::WARN("UnreadNotes: hotkey migration — failed to write {}: {}", keybindsPath, e.what());
+        return;
+    }
+
+    REX::INFO("UnreadNotes: hotkey migration — wrote {} entr{} to {} (toggle={}, mark={})",
+              added, added == 1 ? "y" : "ies", keybindsPath, toggleKey, markKey);
+}
+
 // Idempotent post-migration cleanup. Runs every load, fixes up MCM Settings
 // entries that arose from v1.4.0 section/key changes when a user migrated
 // with a pre-section-move interim build, OR when a v1.3.0 user migrated and
@@ -499,25 +713,18 @@ static void CleanupOrphanedKeys()
         REX::INFO("UnreadNotes: cleaned orphan [Display]/iLogLevel from MCM Settings");
     }
 
-    // Hotkey keys: renamed i* -> s* for the textinput convention. Forward-
-    // migrate values into the new name then drop the old one.
-    auto cleanupHotkey = [mcmSettings](const char* oldName, const char* newName) {
-        int oldVal = GetPrivateProfileIntA("Input", oldName, kSentinel, mcmSettings);
-        if (oldVal == kSentinel) return;  // nothing to migrate
-
-        int newVal = GetPrivateProfileIntA("Input", newName, kSentinel, mcmSettings);
-        if (newVal == kSentinel)
-        {
-            char buf[16];
-            std::snprintf(buf, sizeof(buf), "%d", oldVal);
-            WritePrivateProfileStringA("Input", newName, buf, mcmSettings);
-            REX::INFO("UnreadNotes: forward-migrated [Input]/{}={} -> {}", oldName, oldVal, newName);
-        }
-        WritePrivateProfileStringA("Input", oldName, nullptr, mcmSettings);
-        REX::INFO("UnreadNotes: cleaned legacy [Input]/{} from MCM Settings", oldName);
+    // Hotkey keys: stale if they appear in MCM-Settings — the picker writes
+    // to Keybinds.json now, and the migration skips them when copying from
+    // F4SE-Plugins. Defensive cleanup catches any that slipped in via manual
+    // edit or interim-build state.
+    auto dropStaleHotkey = [mcmSettings](const char* keyName) {
+        if (GetPrivateProfileIntA("Input", keyName, kSentinel, mcmSettings) == kSentinel)
+            return;
+        WritePrivateProfileStringA("Input", keyName, nullptr, mcmSettings);
+        REX::INFO("UnreadNotes: dropped stale [Input]/{} from MCM Settings", keyName);
     };
-    cleanupHotkey("iToggleKey", "sToggleKey");
-    cleanupHotkey("iMarkKey",   "sMarkKey");
+    dropStaleHotkey("iToggleKey");
+    dropStaleHotkey("iMarkKey");
 
     // Suffix values: strip leading whitespace from pre-1.4.0 quoted/spaced
     // values so MCM's textinput renders the visible part cleanly. The DLL
@@ -596,50 +803,76 @@ static void LoadConfig()
         NormaliseSuffix(g_cfgMarkSuffix, sizeof(g_cfgMarkSuffix));
     }
 
-    // Hotkey keys: canonical names are sToggleKey / sMarkKey (s* prefix to
-    // satisfy MCM's textinput-with-ModSettingString convention). Legacy i*
-    // names act as an alias so v1.3.0-era F4SE-Plugins INIs still work for
-    // non-MCM users without migration. Probe order matters:
-    //   1. s* in user-override files (MCM-Settings, F4SE-Plugins) — user
-    //      explicitly set the canonical name
-    //   2. i* in user-override files — user set the legacy name; honour it
-    //   3. s* via the full chain (will hit defaults' sName=0) — nothing
-    //      user-set anywhere, use the shipped default
-    // Skipping defaults at step 1 is what makes step 2 reachable; otherwise
-    // defaults' `sToggleKey=0` would shadow a user's `iToggleKey=220`.
-    auto loadKey = [](const char* sName, const char* iName, std::uint32_t& out) -> const char* {
+    // Hotkey precedence:
+    //   1. MCM-Keybinds (Data/MCM/Settings/Keybinds.json) — user bound a key
+    //      via the in-game key picker
+    //   2. F4SE-Plugins INI iName — non-MCM user's scan code (v1.3.0-compatible)
+    //   3. Defaults iName=0 — nothing set anywhere, hotkey disabled
+    // MCM-Settings is intentionally absent: no shipped version writes hotkeys
+    // there (the picker writes to Keybinds.json instead), so probing it would
+    // only match stale dev artefacts.
+    auto loadKey = [](const char* mcmId, const char* iniName,
+                      std::uint32_t& outKey, std::uint32_t& outMods) -> const char* {
+        if (const char* path = ReadMcmHotkey(mcmId, outKey, outMods))
+            return path;
+
+        // When MCM is installed, it owns the hotkey config: no entry in
+        // Keybinds.json means the user explicitly cleared the binding (or
+        // never set it). Falling through to F4SE-Plugins INI here would
+        // silently resurrect a v1.3.0-era scan code after the user thought
+        // they'd disabled the hotkey via the picker. So treat MCM-installed +
+        // no-entry as "disabled" and bail out before consulting the INI.
+        // Return the MCM-Unbound sentinel so the source log line shows the
+        // distinction from "fell through to defaults."
+        outMods = 0;
+        if (IsMcmInstalled())
+        {
+            outKey = 0;
+            return kMcmUnboundSentinel;
+        }
+
+        // Non-MCM path: scan code only, no modifier support.
+        constexpr int kSentinel = INT_MIN;
+        const char* legacy = GetLegacyIniPath();
         int rawValue = 0;
-        const char* path = ReadUserConfigInt("Input", sName, rawValue);
-        const char* found = sName;
-        if (!path)
+        const char* path = nullptr;
+        if (GetFileAttributesA(legacy) != INVALID_FILE_ATTRIBUTES)
         {
-            path = ReadUserConfigInt("Input", iName, rawValue);
-            found = iName;
+            int v = GetPrivateProfileIntA("Input", iniName, kSentinel, legacy);
+            if (v != kSentinel) { rawValue = v; path = legacy; }
         }
         if (!path)
         {
-            path = ReadConfigInt("Input", sName, 0, rawValue);
-            found = sName;
+            // Defaults file always present (shipped); fallback to 0.
+            rawValue = GetPrivateProfileIntA("Input", iniName, 0, GetMcmDefaultsPath());
         }
+
         std::uint32_t v = (rawValue >= 0) ? static_cast<std::uint32_t>(rawValue) : 0u;
         if (v > 255)
         {
-            REX::WARN("UnreadNotes: WARNING — {}={} out of keyboard range, disabling", found, v);
+            REX::WARN("UnreadNotes: WARNING — {}={} out of keyboard range, disabling", iniName, v);
             v = 0;
         }
-        out = v;
+        outKey = v;
         return path;
     };
-    const char* togglePath  = loadKey("sToggleKey", "iToggleKey", g_cfgToggleKey);
-    const char* markKeyPath = loadKey("sMarkKey",   "iMarkKey",   g_cfgMarkKey);
+    const char* togglePath  = loadKey("UnreadNotes_toggle", "iToggleKey",
+                                      g_cfgToggleKey, g_cfgToggleMods);
+    const char* markKeyPath = loadKey("UnreadNotes_mark",   "iMarkKey",
+                                      g_cfgMarkKey,   g_cfgMarkMods);
 
-    // Reject misconfiguration: both keys set to the same value means the mark
-    // branch in OnButtonEvent is unreachable.
-    if (g_cfgToggleKey != 0 && g_cfgToggleKey == g_cfgMarkKey)
+    // Reject misconfiguration: identical key + identical modifiers means the
+    // mark branch in OnButtonEvent is unreachable. With modifier support, e.g.
+    // toggle=\ and mark=Shift+\ is fine — only an exact full-combo collision
+    // is a problem.
+    if (g_cfgToggleKey != 0 &&
+        g_cfgToggleKey  == g_cfgMarkKey &&
+        g_cfgToggleMods == g_cfgMarkMods)
     {
-        REX::WARN("UnreadNotes: WARNING — iToggleKey and iMarkKey are both {}; disabling iMarkKey",
-            g_cfgMarkKey);
-        g_cfgMarkKey = 0;
+        REX::WARN("UnreadNotes: WARNING — toggle and mark are both bound to the same combination "
+                  "(key={}, mods={}); disabling mark", g_cfgMarkKey, g_cfgMarkMods);
+        g_cfgMarkKey  = 0;
+        g_cfgMarkMods = 0;
     }
 
     // Reject visually ambiguous state: identical non-empty suffixes mean read
@@ -650,15 +883,15 @@ static void LoadConfig()
             "read and marked items will be visually indistinguishable", g_cfgSuffix);
     }
 
-    char toggleStr[48], markStr[48];
-    FormatKeyForLog(g_cfgToggleKey, toggleStr, sizeof(toggleStr));
-    FormatKeyForLog(g_cfgMarkKey,   markStr,   sizeof(markStr));
+    char toggleStr[64], markStr[64];
+    FormatKeyForLog(g_cfgToggleKey, g_cfgToggleMods, toggleStr, sizeof(toggleStr));
+    FormatKeyForLog(g_cfgMarkKey,   g_cfgMarkMods,   markStr,   sizeof(markStr));
 
     REX::INFO("UnreadNotes: Config — brightness={}% suffix=\"{}\" markSuffix=\"{}\" logLevel={} toggleKey={} markKey={}",
         static_cast<int>(g_cfgBrightness * 100), g_cfgSuffix, g_cfgMarkSuffix, g_cfgLogLevel,
         toggleStr, markStr);
 
-    REX::INFO("UnreadNotes: Sources — iLogLevel={} iReadBrightness={} sSuffix={} sMarkSuffix={} sToggleKey={} sMarkKey={}",
+    REX::INFO("UnreadNotes: Sources — iLogLevel={} iReadBrightness={} sSuffix={} sMarkSuffix={} iToggleKey={} iMarkKey={}",
         ConfigSourceLabel(logLevelPath),
         ConfigSourceLabel(brightnessPath),
         ConfigSourceLabel(suffixPath),
@@ -1132,8 +1365,24 @@ public:
             return;
 
         std::uint32_t key = static_cast<std::uint32_t>(inputEvent->QIDCode());
-        bool isToggle = (g_cfgToggleKey != 0 && key == g_cfgToggleKey);
-        bool isMark   = (g_cfgMarkKey   != 0 && key == g_cfgMarkKey);
+
+        // Snapshot current modifier state at the moment the key fires. We
+        // require an EXACT match between configured and held mods — bare
+        // bindings won't fire on Shift+key, and Shift bindings won't fire on
+        // bare key. VK_SHIFT/VK_CONTROL/VK_MENU each cover both left and right
+        // variants. We additionally bake in Win-held state via a sentinel bit
+        // outside kModMask: any held Win key prevents matching, since our
+        // config can't represent Win combinations (we reject those at read).
+        constexpr std::uint32_t kWinHeldSentinel = 0x80;  // outside kModMask
+        std::uint32_t mods = 0;
+        if (GetAsyncKeyState(VK_SHIFT)   & 0x8000) mods |= kModShift;
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) mods |= kModCtrl;
+        if (GetAsyncKeyState(VK_MENU)    & 0x8000) mods |= kModAlt;
+        if ((GetAsyncKeyState(VK_LWIN) | GetAsyncKeyState(VK_RWIN)) & 0x8000)
+            mods |= kWinHeldSentinel;
+
+        bool isToggle = (g_cfgToggleKey != 0 && key == g_cfgToggleKey && mods == g_cfgToggleMods);
+        bool isMark   = (g_cfgMarkKey   != 0 && key == g_cfgMarkKey   && mods == g_cfgMarkMods);
         if (!isToggle && !isMark)
             return;
 
