@@ -6,7 +6,7 @@ An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read t
 
 - **Read items dimmed** — configurable opacity applied to the entire row (text, item counts, icons)
 - **"(Read)" suffix** on read item names (configurable)
-- **Toggle key** — configurable keypress to mark any readable Pip-Boy item as read or unread (notes, holotapes, magazines, game cartridges, misc items)
+- **Toggle key** — configurable keypress to mark any readable Pip-Boy item as read or unread (notes, holotapes, magazines, game cartridges, misc items). Modifier keys (Shift/Ctrl/Alt) supported when bound via MCM.
 - **Mark key** — separate keypress to flag an item as "marked": stays bright, gets a distinct suffix, and is skipped by auto-mark-as-read. Handy for config holotapes (SKK etc.) and radiant notes with shared FormIDs.
 - **Tracks notes, text holotapes, and audio holotapes**
 - **Magazines included** — read through the Pip-Boy, they're suffixed and dimmed like notes
@@ -14,7 +14,7 @@ An F4SE plugin for Fallout 4 that tracks which notes and holotapes you've read t
 - **Persists across saves** via F4SE cosave system
 - **Survives mod load order changes** — FormIDs resolved on load
 - **No modified SWFs** — pure DLL plugin, no FallUI files are replaced
-- **Configurable** — INI settings with hot-reload (just close and reopen the Pip-Boy)
+- **In-game configuration via MCM** — pickers, sliders, key bindings, all live. Settings hot-reload when the system menu closes — no need to close and reopen the Pip-Boy. Without MCM the mod still works via INI editing.
 
 ## How it works
 
@@ -39,27 +39,48 @@ The toggle key and mark key are mutually exclusive: marking a read item clears t
 
 ## Requirements
 
+**Required:**
+
 - Fallout 4 — any of:
   - OG 1.10.163 (pre-next-gen)
   - NG 1.10.984 (next-gen)
   - AE 1.11.x (anniversary edition)
 - [F4SE](https://f4se.silverlock.org/) matching your runtime (v0.6.23+ for OG, v0.7.x for NG/AE)
 - [Address Library for F4SE](https://www.nexusmods.com/fallout4/mods/47327) — with the `.bin` file matching your specific game version
-- [FallUI - Inventory](https://www.nexusmods.com/fallout4/mods/48758)
+
+**Recommended:**
+
+- [FallUI - Inventory](https://www.nexusmods.com/fallout4/mods/48758) — needed for the dimming effect. Without FallUI, the `(Read)` suffix and toggle/mark keys still work, but read items aren't visually dimmed.
+- [Mod Configuration Menu (MCM)](https://www.nexusmods.com/fallout4/mods/56195) — in-game settings menu and hotkey picker. Without MCM you can still edit settings via INI; with MCM you get a friendlier UX and modifier-key support for hotkeys.
 
 ## Installation
 
-Install via your mod manager (recommended) or copy `UnreadNotes.dll` into:
+Install via your mod manager (recommended) or copy the deploy tree into your `Data/` folder:
 
 ```
 Data/F4SE/Plugins/UnreadNotes.dll
+Data/MCM/Config/UnreadNotes/settings.ini   (shipped defaults — do not edit)
+Data/MCM/Config/UnreadNotes/config.json    (MCM menu definition)
+Data/MCM/Config/UnreadNotes/keybinds.json  (MCM hotkey definition)
 ```
 
-An `UnreadNotes.ini` config file is created automatically on first run.
+If you're upgrading from v1.3.0 or earlier with MCM installed, your existing `Data/F4SE/Plugins/UnreadNotes.ini` is automatically migrated to the MCM-managed location on first launch (the original is kept with a tombstone for downgrade safety).
 
 ## Configuration
 
-Edit `Data/F4SE/Plugins/UnreadNotes.ini` (auto-created on first run). Changes take effect on the next Pip-Boy open — no game restart needed.
+Settings can be edited two ways depending on whether you have MCM installed.
+
+### With MCM (recommended)
+
+Open the in-game MCM menu (`System` → `Mod Configuration Menu` → `Unread Notes`). All settings are exposed there: brightness slider, suffix textfields, hotkey picker (with Shift/Ctrl/Alt modifier support), log level stepper, and debug toggles. Changes apply immediately when you close the system menu — no need to close and reopen the Pip-Boy.
+
+MCM stores your settings in `Data/MCM/Settings/UnreadNotes.ini` (and your hotkey bindings in MCM's global `Data/MCM/Settings/Keybinds.json`).
+
+> **FallUI hotkey conflict note:** FallUI's own Pip-Boy hotkeys (X for inspect, F for favourite, etc.) ignore modifiers, so binding e.g. `Shift+X` here will trigger both UnreadNotes' action AND FallUI's. Pick a key FallUI doesn't claim, or rebind FallUI's via its own MCM.
+
+### Without MCM
+
+Edit `Data/F4SE/Plugins/UnreadNotes.ini` (auto-created on first run from the shipped defaults). The configuration shape mirrors the MCM menu:
 
 ```ini
 [Display]
@@ -67,34 +88,40 @@ Edit `Data/F4SE/Plugins/UnreadNotes.ini` (auto-created on first run). Changes ta
 iReadBrightness=50
 
 ; Text appended to read item names. ASCII only, no < > characters.
-sSuffix=" (Read)"
+sSuffix=(Read)
 
 ; Text appended to MARKED item names (bright, excluded from auto-mark-as-read).
-sMarkSuffix=" (*)"
-
-; Logging level. 0 = minimal, 1 = normal, 2 = debug (includes per-frame perf stats).
-iLogLevel=1
+sMarkSuffix=(*)
 
 [Input]
-
-; Toggle read/unread on the selected Pip-Boy item with a keypress.
-; Value is the decimal code from the Fallout CK wiki's scan-code table.
-; Commented out by default so no key is claimed until you opt in.
-; Reference: https://falloutck.uesp.net/wiki/DirectX_Scan_Codes
+; Hotkeys are DirectX scan codes (decimal). 0 = disabled. No modifier
+; support on this path (bind a single key only). Reference:
+; https://falloutck.uesp.net/wiki/DirectX_Scan_Codes
 ; Suggested unused keys: 189 ("-"), 187 ("="), 220 ("\")
-;iToggleKey=189
-
-; Mark/unmark the selected item. Marked items stay bright, get sMarkSuffix,
-; and are skipped by auto-mark-as-read. Pick a different key from iToggleKey.
-;iMarkKey=187
+iToggleKey=0
+iMarkKey=0
 
 [Debug]
+; Logging level. 0 = minimal, 1 = normal, 2 = debug (per-frame perf).
+iLogLevel=1
+
 ; Set to 1 and open Pip-Boy to trigger. Auto-resets to 0 after use.
 bResetAll=0
 bMarkAllRead=0
 ```
 
-Log file: `Documents\My Games\Fallout4\F4SE\UnreadNotes.log`
+Changes take effect on the next Pip-Boy open. Without MCM there's no live in-game refresh — the system menu hot-reload only applies when MCM is the source.
+
+### Configuration source precedence
+
+When MCM is installed it's the canonical source — clearing a hotkey in the picker fully disables it, regardless of any value in the INI fallback. The full chain (first match wins):
+
+1. `Data/MCM/Settings/Keybinds.json` (hotkey bindings, MCM-managed)
+2. `Data/MCM/Settings/UnreadNotes.ini` (other settings, MCM-managed)
+3. `Data/F4SE/Plugins/UnreadNotes.ini` (manual override; primary source for non-MCM users)
+4. `Data/MCM/Config/UnreadNotes/settings.ini` (shipped defaults — do not edit)
+
+Log file: `Documents\My Games\Fallout4\F4SE\UnreadNotes.log` — every config load logs the resolved values and which file each setting came from.
 
 ## Tracked item types
 

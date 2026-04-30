@@ -7,11 +7,16 @@ you've already seen.
 
 Requirements
 ------------
+Required:
 - Fallout 4 (OG 1.10.163, NG 1.10.984, or AE 1.11.x)
 - F4SE matching your runtime (v0.6.23+ for OG, v0.7.x for NG/AE)
 - Address Library for F4SE (https://www.nexusmods.com/fallout4/mods/47327)
   — with the .bin file matching your specific game version
+
+Recommended:
 - FallUI - Inventory (https://www.nexusmods.com/fallout4/mods/48758)
+  — needed for the dimming effect. Without FallUI, the (Read) suffix and
+  toggle/mark keys still work, but read items aren't visually dimmed.
 
 Installation
 ------------
