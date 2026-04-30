@@ -1,7 +1,9 @@
 # UnreadNotes — Roadmap & Ideas
 
-## Current State (v1.3.0 — Released)
+## Current State (v1.4.0 — Released)
 - **Multi-runtime support**: single DLL works on OG (1.10.163), NG (1.10.984), and AE (1.11.x), auto-detected at load. Built on CommonLibF4 + Address Library.
+- **MCM integration** with two-layer config scheme. In-game key picker for hotkeys (with Shift/Ctrl/Alt modifier support, exact-match semantics). Settings hot-reload when the system menu closes — change a value mid-Pip-Boy and it applies on the next interaction. Non-MCM users still configure via `Data/F4SE/Plugins/UnreadNotes.ini` (bare-key bindings only).
+- Automatic v1.3.0 → v1.4.0 migration: existing INI values carry forward into MCM-managed locations on first launch, with a tombstone marker on the legacy file for downgrade safety.
 - Read tracking for notes and text holotapes via MenuOpenCloseEvent (BookMenu/TerminalMenu)
 - Read tracking for audio holotapes via `DataObj.HolotapePlaying` edge detection
 - Toggle key for manual read/unread on any item; mark key for "stay bright, skip auto-mark"
@@ -9,7 +11,6 @@
 - Renderer alpha dimming (whole row: text, counts, icons) — requires FallUI; suffix/toggle/mark function on vanilla Pip-Boy without it
 - Configurable "(Read)" and "(*)" mark suffixes
 - PipboyMenu vtable swap on AdvanceMovie slot 0x04 for per-frame display refresh
-- INI config with hot-reload on Pip-Boy open
 - Debug commands (bResetAll, bMarkAllRead)
 - Configurable log levels (0=minimal, 1=normal, 2=debug)
 - Startup runtime log line for diagnostic clarity in bug reports
@@ -32,31 +33,11 @@
 
 ## Features — Near Term
 
-### Next release (v1.4.0): MCM migration
+### v1.4.0: MCM migration — DONE
 
-Post-recon design. MCM uses a two-layer INI scheme — defaults at `Data/MCM/Config/<Mod>/settings.ini` (shipped, refreshed each release), user overrides at `Data/MCM/Settings/<Mod>.ini` (MCM-written or hand-edited). This collapses the originally-planned "MCM integration" + "INI auto-merge" into a single architectural change: the two-layer scheme inherently solves the new-keys-don't-appear-in-existing-INI problem because defaults live in a separately-shipped file that gets refreshed each update without touching user values.
+Shipped via the `feature/config-ux` work merged to develop. Two-layer config scheme + MCM key picker with modifier support + system-menu hot-reload + automatic v1.3.0 migration. See CHANGELOG and the merge commit for the full picture.
 
-**Architecture.** DLL reads with a deterministic fallback chain:
-1. `Data/MCM/Settings/UnreadNotes.ini` — user overrides (MCM-managed or hand-edited)
-2. `Data/F4SE/Plugins/UnreadNotes.ini` — legacy / non-MCM users
-3. `Data/MCM/Config/UnreadNotes/settings.ini` — defaults (shipped)
-4. Hardcoded fallback constants
-
-The DLL is file-based and indifferent to MCM's presence; MCM detection only matters for the one-time migration trigger.
-
-**Migration + tombstone.** On first v1.4.0 load, if `Data/MCM/Config/MCM/` exists (MCM detected) AND `Data/MCM/Settings/UnreadNotes.ini` does not exist AND `Data/F4SE/Plugins/UnreadNotes.ini` exists with user values, copy values to the MCM Settings path. **Prepend** a state-agnostic tombstone to the legacy INI explaining the new location and shadow precedence — do **not** strip original values. Preserves downgrade safety (v1.3.0 still reads the legacy file), survives MCM uninstall (DLL reads MCM Settings INI regardless of MCM-the-mod's state), and handles late-MCM-install (trigger is idempotent — runs once when conditions are first met).
-
-**Deliverables (implementation order):**
-
-- [ ] Author shipped defaults INI at `Data/MCM/Config/UnreadNotes/settings.ini`. Content moved verbatim from the current `CreateDefaultConfig` string, with a header documenting the two-layer scheme for non-MCM users (mirroring FallUI's defaults-INI header pattern).
-- [ ] Update `LoadConfig` (`src/main.cpp:182+`) to use the fallback chain. Remove `CreateDefaultConfig` since defaults now ship as a real file.
-- [ ] Implement migration trigger + tombstone prepend. Idempotent — guard with the three conditions above.
-- [ ] Author `Data/MCM/Config/UnreadNotes/config.json`. Menu mirrors the current INI sections (`Display`, `Input`, `Debug`). `pluginRequirements: []` per the Upscaling reference. Verify text-input widget support (for `sSuffix`/`sMarkSuffix`) and key-bind widget support (for `iToggleKey`/`iMarkKey`) during this step; document workarounds if unsupported.
-- [ ] Update `xmake.lua` to deploy the new files into the mod archive's `Data/MCM/Config/UnreadNotes/` path.
-- [ ] Verification matrix — walk the five user cases (new + MCM, new no-MCM, existing + MCM, existing no-MCM, MCM-disabled post-migration). Each must read settings correctly per the fallback chain.
-- [ ] Documentation: README, Nexus description, CHANGELOG. Frame as "config UX, no gameplay changes."
-
-**Out of scope.** Any gameplay/feature changes. Clean blast radius for testing — any regression is by definition in this migration, not bundled feature work. v1.5.0+ feature releases inherit MCM coverage by adding entries alongside any new INI keys.
+Future title-modification work (next bullet) supersedes part of the renderer-suffix story by computing displayed names from the form name source rather than per-frame in the entry list — the suffix-prev tracking added in v1.4.0 is a stopgap until that lands.
 
 ### From v1.0 user feedback (Nexus)
 - [x] ~~**Read/unread toggle on keypress**~~ — DONE. Configurable scan code under `[Input]`, commented out by default. FallUI's menu dispatch uses Windows VK codes; values match UESP's table directly (no DIK conversion needed). Widened the visual/markable filter to include misc items (0x200) so anything toggled gets the suffix and dim.
@@ -90,9 +71,9 @@ The DLL is file-based and indifferent to MCM's presence; MCM detection only matt
 - [x] ~~Review SEH exception handlers~~ — RESOLVED. All removed during cleanup. Hook code is stable. If crashes are reported, can add SEH wrapper around the hook body.
 - [x] ~~Proper git history: squash/clean experimental commits before merging to develop~~ — DONE through v1.3.0. Develop's history is clean: every merged commit is a coherent semantic step (Conventional Commits throughout, no `wip:`/`fixup:` noise). The remaining `wip:` commits live on parked branches (`feature/perf-caching`, `feature/sort-to-bottom-wip`) which is the intended use of the prefix — paused drafts, not history.
 
-## Publishing (v1.0 → v1.3.0 archaeology)
+## Publishing (v1.0 → v1.4.0 archaeology)
 
-All items below are done as of v1.3.0; kept here as a checklist record.
+All items below are done as of v1.4.0; kept here as a checklist record.
 
 - [x] ~~NexusMods page — full rewrite of description for v2 (pure C++ approach, no SWF patches)~~
 - [x] ~~New screenshots showing dimming, "(Read)" suffix, config options~~
@@ -102,7 +83,7 @@ All items below are done as of v1.3.0; kept here as a checklist record.
 - [x] ~~Document F4SE dependency~~ — v1.3.0 covers OG (v0.6.23) and NG/AE (v0.7.x)
 - [x] ~~Document FallUI Inventory dependency~~ — softened to Recommended in v1.3.0; works on vanilla too with reduced functionality
 - [x] ~~No ESP/ESM required — DLL-only mod~~
-- [x] ~~Release archive: just UnreadNotes.dll (INI auto-created on first run)~~
-- [x] ~~Changelog / versioning~~ — CHANGELOG.md tracks 1.0 → 1.3.0
+- [x] ~~Release archive: just UnreadNotes.dll (INI auto-created on first run)~~ — v1.4.0 archive also ships `Data/MCM/Config/UnreadNotes/` (defaults INI + menu definition + keybinds).
+- [x] ~~Changelog / versioning~~ — CHANGELOG.md tracks 1.0 → 1.4.0
 - [x] ~~Document INI settings with examples in the mod description~~
 - [x] ~~Compatibility notes: GOG and Steam versions, other Pip-Boy mods~~
