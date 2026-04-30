@@ -1307,21 +1307,20 @@ static int ModifyEntryListData(GFx::Movie* /*movie*/, GFx::Value& entryList, std
         // Strip a stale previous-load suffix if present, so the new suffix
         // doesn't stack on top of the old. Only one would be on a given
         // entry at a time (read or marked, never both).
-        std::size_t baseLen = tLen;
-        for (const char* prev : { g_cfgPrevSuffix, g_cfgPrevMarkSuffix })
+        std::string_view textView{ text, tLen };
+        for (std::string_view prev : {
+                std::string_view{ g_cfgPrevSuffix },
+                std::string_view{ g_cfgPrevMarkSuffix } })
         {
-            std::size_t pLen = std::strlen(prev);
-            if (pLen == 0 || baseLen < pLen) continue;
-            if (std::strcmp(text + baseLen - pLen, prev) == 0)
-            {
-                baseLen -= pLen;
-                break;
-            }
+            if (prev.empty() || !textView.ends_with(prev)) continue;
+            textView.remove_suffix(prev.size());
+            LOG(2, "UnreadNotes: Stripped stale \"{}\" before applying new suffix", prev);
+            break;
         }
 
         char buf[512];
         std::snprintf(buf, sizeof(buf), "%.*s%s",
-                      static_cast<int>(baseLen), text, suffix);
+                      static_cast<int>(textView.size()), textView.data(), suffix);
 
         GFx::Value newTextVal{ buf };
         dataEntry.SetMember("text", newTextVal);
