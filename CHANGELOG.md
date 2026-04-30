@@ -2,6 +2,38 @@
 
 All notable changes to UnreadNotes will be documented in this file.
 
+## [1.4.0] — MCM integration
+
+- In-game configuration via [MCM](https://www.nexusmods.com/fallout4/mods/56195).
+  All settings (brightness, suffixes, log level, hotkeys) are exposed in the
+  MCM menu when MCM is installed. Without MCM the mod still works — settings
+  are edited via `Data/F4SE/Plugins/UnreadNotes.ini` as before.
+- Hotkey binding via MCM's key picker. Shift/Ctrl/Alt modifiers supported with
+  exact-match semantics — bare `\` won't fire on `Shift+\`, and vice versa.
+  Bindings live in MCM's global `Data/MCM/Settings/Keybinds.json`. Non-MCM
+  users still bind via scan-code in the INI (bare keys only, no modifiers).
+- Two-layer config scheme: `Data/MCM/Config/UnreadNotes/settings.ini` ships as
+  the read-only defaults reference (refreshed on each mod update), while
+  `Data/MCM/Settings/UnreadNotes.ini` holds user-managed overrides. New
+  settings added in future releases inherit their defaults automatically —
+  your existing customisations stay intact and no INI regeneration is needed
+  to pick up new keys.
+- Automatic migration on first launch with MCM: existing `UnreadNotes.ini`
+  values from v1.3.0 carry forward into MCM Settings, and v1.3.0 hotkey
+  scan codes carry forward into Keybinds.json (preserving other mods'
+  bindings already there). The original INI is preserved with a tombstone
+  marker for downgrade safety.
+- Settings hot-reload when the system menu closes — change a value in MCM
+  while the Pip-Boy is open and it applies on the next interaction; no
+  need to close and reopen the Pip-Boy.
+- FallUI compatibility note: FallUI's own Pip-Boy hotkeys (X for inspect,
+  F for favourite, etc.) ignore modifiers, so e.g. `Shift+X` will trigger
+  both UnreadNotes' action AND FallUI's. Pick a key FallUI doesn't claim,
+  or rebind FallUI's via its own MCM.
+- Adds a `nlohmann/json` (3.11.3) dependency for parsing MCM's keybind
+  registry. All access is wrapped in try/catch with shape and bounds
+  validation so a corrupt JSON file doesn't take the plugin down.
+
 ## [1.3.0] — NG/AE runtime support
 
 - Now works on NG (1.10.984) and AE (1.11.x) in addition to the existing
