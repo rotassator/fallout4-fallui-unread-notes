@@ -55,6 +55,14 @@ static int           g_cfgLogLevel = 1;
 static float         g_cfgBrightness = 0.5f;
 static char          g_cfgSuffix[64] = " (Read)";
 static char          g_cfgMarkSuffix[64] = " (*)";
+// Previous-load suffix values, snapshotted at the start of each LoadConfig.
+// When the user changes a suffix via MCM and the system-menu hot reload fires,
+// ModifyEntryListData uses these to strip the stale suffix off entry names
+// before appending the new one — without it the new suffix stacks on top of
+// the old until Pip-Boy is reopened. Single-snapshot only (handles the common
+// single-edit case); a future GetFullName-replacement hook would obviate this.
+static char          g_cfgPrevSuffix[64] = "";
+static char          g_cfgPrevMarkSuffix[64] = "";
 static std::uint32_t g_cfgToggleKey  = 0;   // VK code (per UESP's "DirectX Scan Codes" page); 0 = disabled
 static std::uint32_t g_cfgToggleMods = 0;   // bitfield: kModShift | kModCtrl | kModAlt
 static std::uint32_t g_cfgMarkKey    = 0;
@@ -777,6 +785,12 @@ static void LoadConfig()
     }
     g_cfgBrightness = static_cast<float>(rawBrightness) / 100.0f;
 
+    // Snapshot the current suffixes before they get overwritten with new
+    // values. Used by ModifyEntryListData / StripKnownSuffixesFromEntry to
+    // strip stale suffix text from entry names on hot reload.
+    strncpy_s(g_cfgPrevSuffix,     sizeof(g_cfgPrevSuffix),     g_cfgSuffix,     _TRUNCATE);
+    strncpy_s(g_cfgPrevMarkSuffix, sizeof(g_cfgPrevMarkSuffix), g_cfgMarkSuffix, _TRUNCATE);
+
     char suffixBuf[64] = {};
     const char* suffixPath = ReadConfigString("Display", "sSuffix", "(Read)", suffixBuf, sizeof(suffixBuf));
     {
@@ -1290,8 +1304,24 @@ static int ModifyEntryListData(GFx::Movie* /*movie*/, GFx::Value& entryList, std
         if (tLen >= sLen && std::strcmp(text + tLen - sLen, suffix) == 0)
             continue;
 
+        // Strip a stale previous-load suffix if present, so the new suffix
+        // doesn't stack on top of the old. Only one would be on a given
+        // entry at a time (read or marked, never both).
+        std::size_t baseLen = tLen;
+        for (const char* prev : { g_cfgPrevSuffix, g_cfgPrevMarkSuffix })
+        {
+            std::size_t pLen = std::strlen(prev);
+            if (pLen == 0 || baseLen < pLen) continue;
+            if (std::strcmp(text + baseLen - pLen, prev) == 0)
+            {
+                baseLen -= pLen;
+                break;
+            }
+        }
+
         char buf[512];
-        std::snprintf(buf, sizeof(buf), "%s%s", text, suffix);
+        std::snprintf(buf, sizeof(buf), "%.*s%s",
+                      static_cast<int>(baseLen), text, suffix);
 
         GFx::Value newTextVal{ buf };
         dataEntry.SetMember("text", newTextVal);
@@ -1320,7 +1350,11 @@ static void StripKnownSuffixesFromEntry(GFx::Value& entry, const char* itemLabel
 
     std::string_view text{ textVal.GetString() };
 
-    for (std::string_view suffix : { std::string_view{ g_cfgSuffix }, std::string_view{ g_cfgMarkSuffix } })
+    for (std::string_view suffix : {
+            std::string_view{ g_cfgSuffix },
+            std::string_view{ g_cfgMarkSuffix },
+            std::string_view{ g_cfgPrevSuffix },
+            std::string_view{ g_cfgPrevMarkSuffix } })
     {
         if (suffix.empty() || !text.ends_with(suffix)) continue;
 
