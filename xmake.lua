@@ -10,14 +10,7 @@ set_warnings("allextra")
 add_rules("mode.debug", "mode.releasedbg")
 add_rules("plugin.vsxmake.autoupdate")
 
--- JSON parser for reading MCM's global Keybinds.json. Pinned to 3.11.3 after
--- a security/health audit (see commit log): zero advisories ever filed
--- against the library, non-recursive parser (no stack-blow on nested input),
--- continuously fuzzed via OSS-Fuzz, header-only (vendorable, MIT-licensed).
--- 3.12.0 is also fine but 3.11.3 has 17 months of in-the-wild soak time. All
--- access in main.cpp is wrapped in try/catch with bounds-checks per the
--- library's own untrusted-input guidance.
-add_requires("nlohmann_json 3.11.3")
+add_requires("nlohmann_json 3.11.3")  -- Keybinds.json parsing; see commit log for audit
 
 -- CRITICAL: must match commonlibf4's build-time value. Without this our TU
 -- sees REL::ID sized for 1 runtime (the header default) while commonlibf4.lib

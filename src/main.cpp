@@ -510,21 +510,10 @@ static void MaybeMigrateLegacyToMcm()
     // separately so the user's v1.3.0 bindings show up in the MCM picker.
     MigrateLegacyHotkeysToKeybinds();
 
-    // Prepend tombstone to the legacy file. Idempotent — if our marker is
-    // already present (e.g. user deleted MCM Settings post-migration and we
-    // re-migrated), skip the prepend so we don't stack tombstones.
+    // Prepend tombstone to the legacy file. Read once, check for our marker,
+    // skip if already present so re-migrations don't stack tombstones.
     constexpr const char* kTombstoneMarker = "UnreadNotes \xE2\x80\x94 config migrated to the MCM directory layout";
 
-    char headBuf[256] = {};
-    if (FILE* fr = nullptr; (fopen_s(&fr, legacy, "rb"), fr != nullptr))
-    {
-        std::fread(headBuf, 1, sizeof(headBuf) - 1, fr);
-        std::fclose(fr);
-    }
-    if (std::strstr(headBuf, kTombstoneMarker) != nullptr)
-        return;
-
-    // Read full original content
     std::string original;
     FILE* fr = nullptr;
     fopen_s(&fr, legacy, "rb");
@@ -542,6 +531,9 @@ static void MaybeMigrateLegacyToMcm()
         std::fread(original.data(), 1, original.size(), fr);
     }
     std::fclose(fr);
+
+    if (original.find(kTombstoneMarker) != std::string::npos)
+        return;
 
     // Tombstone wording is state-agnostic: describes the new location and
     // shadow precedence without claiming MCM is currently active. Stays
